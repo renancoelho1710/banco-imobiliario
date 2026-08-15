@@ -287,15 +287,25 @@ function playBankSound(kind: BankSound = 'success') {
       warn: [[420, 0.00, 0.10], [350, 0.13, 0.13]],
     };
 
+    const peakGain: Record<BankSound, number> = {
+      pix: 0.12,
+      transfer: 0.14,
+      // Solicitação/cobrança nova precisa chamar atenção mesmo em ambiente de jogo.
+      // O volume final ainda respeita o volume físico do celular.
+      request: 0.72,
+      success: 0.11,
+      warn: 0.18,
+    };
+
     patterns[kind].forEach(([frequency, delay, duration]) => {
       const oscillator = ctx.createOscillator();
       const gain = ctx.createGain();
       const start = ctx.currentTime + delay;
       const end = start + duration;
-      oscillator.type = 'sine';
+      oscillator.type = kind === 'request' ? 'triangle' : 'sine';
       oscillator.frequency.setValueAtTime(frequency, start);
       gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.045, start + 0.012);
+      gain.gain.exponentialRampToValueAtTime(peakGain[kind], start + 0.012);
       gain.gain.exponentialRampToValueAtTime(0.0001, end);
       oscillator.connect(gain);
       gain.connect(ctx.destination);
@@ -354,14 +364,14 @@ function Modal({
   title: string;
   children: ReactNode;
   onClose: () => void;
-  variant?: 'scroll' | 'fit';
+  variant?: 'scroll' | 'fit' | 'compact';
 }) {
   if (!open) return null;
   if (typeof document === 'undefined') return null;
 
   const node = (
     <div className="mOverlay" role="dialog" aria-modal="true" onMouseDown={onClose}>
-      <div className={`mCard ${variant === 'fit' ? 'mFit' : ''}`} onMouseDown={(e) => e.stopPropagation()}>
+      <div className={`mCard ${variant === 'fit' ? 'mFit' : variant === 'compact' ? 'mCompact' : ''}`} onMouseDown={(e) => e.stopPropagation()}>
         <div className="mHead">
   {title ? <div className="mTitle">{title}</div> : <div />}
   <button className="mX" onClick={onClose} aria-label="Fechar">
@@ -445,6 +455,28 @@ function Modal({
 .mCard.mFit .mBody{
   overflow: hidden;          /* <- tira rolagem */
   align-content: start;
+}
+
+/* Modal realmente compacto para confirmações/transferências curtas. */
+.mCard.mCompact{
+  width: min(430px, 100%);
+  max-height: min(520px, calc(100dvh - 36px));
+  padding: 10px;
+  border-radius: 18px;
+}
+
+.mCard.mCompact .mBody{
+  overflow: auto;
+  max-height: min(430px, calc(100dvh - 105px));
+  gap: 8px;
+}
+
+.mCard.mCompact .sum{
+  padding: 8px 10px;
+}
+
+.mCard.mCompact .field{
+  margin: 0;
 }
 
         .mHead {
@@ -1602,14 +1634,38 @@ useEffect(() => {
     });
   }, [transfersArr, role, uid, room, propsAll]);
 
+  const bankerPendingPropertyTransfers = useMemo(() => {
+    if (role !== 'bancario') return [] as TransferDoc[];
+    return transfersArr.filter((tr) => {
+      if (!tr || tr.status !== 'pending_payment') return false;
+      const buyer = room?.players?.[tr.toUid];
+      const seller = room?.players?.[tr.fromUid];
+      const prop = propsAll.find((item) => item.id === tr.propId);
+      if (!buyer || !seller || !prop) return false;
+      if (buyer.status === 'falido' || buyer.status === 'desistente') return false;
+      if (seller.status === 'falido' || seller.status === 'desistente') return false;
+      return prop.ownerUid === tr.fromUid;
+    });
+  }, [transfersArr, role, room, propsAll]);
+
   const pendingCount = useMemo(() => {
     const ids = new Set<string>();
     pendingSales.forEach((item: any) => ids.add(`sale:${item.id}`));
     pendingBankPropertyTransfers.forEach((item) => ids.add(`transfer:${item.id}`));
+    bankerPendingPropertyTransfers.forEach((item) => ids.add(`transfer:${item.id}`));
     bankerPurchaseRequests.forEach((item) => ids.add(`request:${item.id}`));
     myPendingPurchaseRequests.forEach((item) => ids.add(`request:${item.id}`));
     return ids.size;
-  }, [pendingSales, pendingBankPropertyTransfers, bankerPurchaseRequests, myPendingPurchaseRequests]);
+  }, [pendingSales, pendingBankPropertyTransfers, bankerPendingPropertyTransfers, bankerPurchaseRequests, myPendingPurchaseRequests]);
+
+  const cancelablePendingCount = useMemo(() => {
+    let count = 0;
+    count += role === 'bancario' ? bankerPurchaseRequests.length : myPendingPurchaseRequests.length;
+    count += pendingSales.filter((sale: any) => sale.status === 'pending_payment' && countPaidSaleInstallments(sale) === 0).length;
+    count += pendingBankPropertyTransfers.length;
+    count += bankerPendingPropertyTransfers.length;
+    return count;
+  }, [role, bankerPurchaseRequests, myPendingPurchaseRequests, pendingSales, pendingBankPropertyTransfers, bankerPendingPropertyTransfers]);
 
   useEffect(() => {
     if (role !== 'bancario') {
@@ -2415,8 +2471,157 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
       if (!current || current.status !== 'requested' || current.buyerUid !== uid) return;
       current.status = 'cancelled';
       current.cancelledAt = Date.now();
+      current.cancelledBy = uid;
       return current;
     });
+  }
+
+  async function bankerCancelPurchaseRequest(request: PurchaseRequestDoc) {
+    if (role !== 'bancario' || request.status !== 'requested') return;
+    const ok = window.confirm(`Cancelar a solicitação de ${request.buyerName} para ${request.propName}?`);
+    if (!ok) return;
+
+    await runTransaction(ref(db, `${roomRefBase}/purchaseRequests/${request.id}`), (current: any) => {
+      if (!current || current.status !== 'requested') return;
+      current.status = 'cancelled';
+      current.cancelledAt = Date.now();
+      current.cancelledBy = uid;
+      current.cancelReason = 'cancelled_by_bank';
+      return current;
+    });
+  }
+
+  function countPaidSaleInstallments(saleLike: any) {
+    const installments = Math.max(1, Number(saleLike?.installments || 1));
+    const paidArr: boolean[] = Array.isArray(saleLike?.paidInstallments)
+      ? saleLike.paidInstallments
+      : Array(installments).fill(false);
+    return paidArr.filter(Boolean).length;
+  }
+
+  async function cancelPendingSale(saleLike: SaleDoc) {
+    const canCancel = role === 'bancario' || (role === 'jogador' && saleLike.buyerUid === uid);
+    if (!canCancel || saleLike.status !== 'pending_payment') return;
+
+    const paidCount = countPaidSaleInstallments(saleLike);
+    if (paidCount > 0) {
+      window.alert('Essa negociação já possui pagamento registrado. Para não perder dinheiro ou histórico, ela não pode ser limpa automaticamente.');
+      return;
+    }
+
+    const ok = window.confirm(`Cancelar a negociação de ${saleLike.propName}? Nenhum pagamento foi registrado.`);
+    if (!ok) return;
+
+    const result = await runTransaction(ref(db, roomRefBase), (state: any) => {
+      if (!state) return;
+      const sale = state.sales?.[saleLike.id];
+      if (!sale || sale.status !== 'pending_payment') return;
+      const paid = Array.isArray(sale.paidInstallments) ? sale.paidInstallments.filter(Boolean).length : Number(sale.paidCount || 0);
+      if (paid > 0) return;
+      if (role === 'jogador' && sale.buyerUid !== uid) return;
+
+      sale.status = 'cancelled';
+      sale.cancelledAt = Date.now();
+      sale.cancelledBy = uid;
+      state.sales[saleLike.id] = sale;
+
+      if (sale.requestId && state.purchaseRequests?.[sale.requestId]) {
+        const req = state.purchaseRequests[sale.requestId];
+        if (req.status === 'accepted' || req.status === 'requested') {
+          req.status = 'cancelled';
+          req.cancelledAt = Date.now();
+          req.cancelledBy = uid;
+          req.cancelReason = 'sale_cancelled';
+          state.purchaseRequests[sale.requestId] = req;
+        }
+      }
+      return state;
+    });
+
+    if (!result.committed) {
+      window.alert('Não foi possível cancelar. A negociação pode ter recebido um pagamento enquanto você confirmava.');
+    }
+  }
+
+  async function cancelPendingPropertyTransfer(transferLike: TransferDoc) {
+    const canCancel = role === 'bancario' ||
+      (role === 'jogador' && (transferLike.toUid === uid || transferLike.fromUid === uid));
+    if (!canCancel || transferLike.status !== 'pending_payment') return;
+
+    const ok = window.confirm(`Cancelar a transferência pendente de ${transferLike.propName}?`);
+    if (!ok) return;
+
+    await runTransaction(ref(db, `${roomRefBase}/transfers/${transferLike.id}`), (current: any) => {
+      if (!current || current.status !== 'pending_payment') return;
+      if (role === 'jogador' && current.toUid !== uid && current.fromUid !== uid) return;
+      current.status = 'cancelled';
+      current.cancelledAt = Date.now();
+      current.cancelledBy = uid;
+      return current;
+    });
+  }
+
+  async function clearCancelablePendings() {
+    if (!room || cancelablePendingCount <= 0) return;
+    const scope = role === 'bancario' ? 'do Banco e dos jogadores' : 'da sua conta';
+    const ok = window.confirm(
+      `Limpar pendências ${scope}?\n\nSomente solicitações e negociações SEM nenhum pagamento serão canceladas. Pagamentos e parcelas já realizados serão preservados.`
+    );
+    if (!ok) return;
+
+    const result = await runTransaction(ref(db, roomRefBase), (state: any) => {
+      if (!state) return;
+      const now = Date.now();
+
+      state.purchaseRequests = state.purchaseRequests || {};
+      Object.values(state.purchaseRequests).forEach((req: any) => {
+        if (!req || req.status !== 'requested') return;
+        if (role === 'jogador' && req.buyerUid !== uid) return;
+        req.status = 'cancelled';
+        req.cancelledAt = now;
+        req.cancelledBy = uid;
+        req.cancelReason = role === 'bancario' ? 'bank_bulk_cleanup' : 'player_bulk_cleanup';
+      });
+
+      state.sales = state.sales || {};
+      Object.values(state.sales).forEach((sale: any) => {
+        if (!sale || sale.status !== 'pending_payment') return;
+        if (role === 'jogador' && sale.buyerUid !== uid) return;
+        const paid = Array.isArray(sale.paidInstallments)
+          ? sale.paidInstallments.filter(Boolean).length
+          : Number(sale.paidCount || 0);
+        if (paid > 0) return;
+
+        sale.status = 'cancelled';
+        sale.cancelledAt = now;
+        sale.cancelledBy = uid;
+
+        if (sale.requestId && state.purchaseRequests?.[sale.requestId]) {
+          const req = state.purchaseRequests[sale.requestId];
+          if (req.status === 'accepted' || req.status === 'requested') {
+            req.status = 'cancelled';
+            req.cancelledAt = now;
+            req.cancelledBy = uid;
+            req.cancelReason = 'sale_cancelled_by_cleanup';
+          }
+        }
+      });
+
+      state.transfers = state.transfers || {};
+      Object.values(state.transfers).forEach((tr: any) => {
+        if (!tr || tr.status !== 'pending_payment') return;
+        if (role === 'jogador' && tr.toUid !== uid && tr.fromUid !== uid) return;
+        tr.status = 'cancelled';
+        tr.cancelledAt = now;
+        tr.cancelledBy = uid;
+      });
+
+      return state;
+    });
+
+    if (result.committed) {
+      playBankSound('success');
+    }
   }
 
 /* ============ VENDA DE PROPRIEDADE (bancário) ============ */
@@ -3331,13 +3536,22 @@ function matchesQuery(p: PropertyItem, q: string) {
               )}
             
                           {/* PENDÊNCIAS / PARCELAS */}
-              {focus === 'pend' && (pendingSales.length > 0 || pendingBankPropertyTransfers.length > 0 || bankerPurchaseRequests.length > 0 || myPendingPurchaseRequests.length > 0) && (
+              {focus === 'pend' && (pendingSales.length > 0 || pendingBankPropertyTransfers.length > 0 || bankerPendingPropertyTransfers.length > 0 || bankerPurchaseRequests.length > 0 || myPendingPurchaseRequests.length > 0) && (
                 <div className="pendBox">
-                  <div className="pendTitle">Pendências</div>
-                  <div className="pendHint">
-                    {role === 'bancario'
-                      ? 'Solicitações de compra e pagamentos pendentes dos jogadores.'
-                      : 'Solicitações enviadas, compras e transferências pendentes da sua conta.'}
+                  <div className="pendTop">
+                    <div>
+                      <div className="pendTitle">Pendências</div>
+                      <div className="pendHint">
+                        {role === 'bancario'
+                          ? 'Solicitações de compra e pagamentos pendentes dos jogadores.'
+                          : 'Solicitações enviadas, compras e transferências pendentes da sua conta.'}
+                      </div>
+                    </div>
+                    {cancelablePendingCount > 0 && (
+                      <button className="miniBtn dangerMini" type="button" onClick={clearCancelablePendings}>
+                        Limpar pendências
+                      </button>
+                    )}
                   </div>
 
                   <div className="pendList">
@@ -3345,30 +3559,34 @@ function matchesQuery(p: PropertyItem, q: string) {
                       <div className="pendEmpty">Nenhuma pendência ativa nesta conta.</div>
                     )}
                     {role === 'bancario' && bankerPurchaseRequests.map((req) => (
-                      <div key={req.id} className="pendItem">
-                        <div className="pendRow">
+                      <div key={req.id} className="pendItem purchaseRequestItem">
+                        <div className="pendRow requestRow">
                           <div className="pendMain">
                             <div className="pendName">Solicitação • {req.propName}</div>
                             <div className="pendSub">
                               <b>{req.buyerName}</b> quer comprar • {money(req.price)}
                             </div>
                           </div>
-                          <button
-                            className="miniBtn"
-                            onClick={() => {
-                              openSell(req.propId, { buyerUid: req.buyerUid, requestId: req.id });
-                            }}
-                          >
-                            Atender
-                          </button>
+                          <div className="pendActions">
+                            <button
+                              className="miniBtn"
+                              onClick={() => {
+                                openSell(req.propId, { buyerUid: req.buyerUid, requestId: req.id });
+                              }}
+                            >
+                              Atender
+                            </button>
+                            <button className="miniBtn dangerMini" onClick={() => bankerCancelPurchaseRequest(req)}>
+                              Cancelar
+                            </button>
+                          </div>
                         </div>
-                        <div className="pendNext">Escolha Pix, Transferência ou Dinheiro e defina à vista ou parcelado.</div>
                       </div>
                     ))}
 
                     {role === 'jogador' && myPendingPurchaseRequests.map((req) => (
-                      <div key={req.id} className="pendItem">
-                        <div className="pendRow">
+                      <div key={req.id} className="pendItem purchaseRequestItem">
+                        <div className="pendRow requestRow">
                           <div className="pendMain">
                             <div className="pendName">Solicitação enviada • {req.propName}</div>
                             <div className="pendSub">{money(req.price)} • aguardando o Banco</div>
@@ -3377,7 +3595,6 @@ function matchesQuery(p: PropertyItem, q: string) {
                             Cancelar
                           </button>
                         </div>
-                        <div className="pendNext">Quando o bancário atender, a cobrança aparecerá aqui.</div>
                       </div>
                     ))}
 
@@ -3407,19 +3624,33 @@ function matchesQuery(p: PropertyItem, q: string) {
                             </div>
 
                             {role === 'bancario' && nextIdx >= 0 && (
-                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                              <div className="pendActions">
                                 <button className="miniBtn" onClick={() => openNextInstallmentQr(s)}>
                                   Pix
                                 </button>
                                 <button className="miniBtn" onClick={() => receiveNextInstallmentCash(s as SaleDoc)}>
                                   Dinheiro
                                 </button>
+                                {paidCount === 0 && (
+                                  <button className="miniBtn dangerMini" onClick={() => cancelPendingSale(s as SaleDoc)}>
+                                    Cancelar
+                                  </button>
+                                )}
                               </div>
                             )}
-                            {role === 'jogador' && nextIdx >= 0 && s.paymentMethod === 'bank_transfer' && (
-                              <button className="miniBtn" onClick={() => paySaleByBankTransfer(s as SaleDoc)}>
-                                Pagar transferência
-                              </button>
+                            {role === 'jogador' && nextIdx >= 0 && (
+                              <div className="pendActions">
+                                {s.paymentMethod === 'bank_transfer' && (
+                                  <button className="miniBtn" onClick={() => paySaleByBankTransfer(s as SaleDoc)}>
+                                    Pagar transferência
+                                  </button>
+                                )}
+                                {paidCount === 0 && (
+                                  <button className="miniBtn dangerMini" onClick={() => cancelPendingSale(s as SaleDoc)}>
+                                    Cancelar
+                                  </button>
+                                )}
+                              </div>
                             )}
                           </div>
 
@@ -3458,19 +3689,40 @@ function matchesQuery(p: PropertyItem, q: string) {
                     })}
 
                     {pendingBankPropertyTransfers.map((tr) => (
-                      <div key={tr.id} className="pendItem">
-                        <div className="pendRow">
+                      <div key={tr.id} className="pendItem purchaseRequestItem">
+                        <div className="pendRow requestRow">
                           <div className="pendMain">
                             <div className="pendName">{tr.propName}</div>
                             <div className="pendSub">
                               Compra de <b>{tr.fromName}</b> • {money(tr.amount)}
                             </div>
                           </div>
-                          <button className="miniBtn" onClick={() => payPropertyByBankTransfer(tr)}>
-                            Pagar transferência
+                          <div className="pendActions">
+                            <button className="miniBtn" onClick={() => payPropertyByBankTransfer(tr)}>
+                              Pagar transferência
+                            </button>
+                            <button className="miniBtn dangerMini" onClick={() => cancelPendingPropertyTransfer(tr)}>
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {role === 'bancario' && bankerPendingPropertyTransfers.map((tr) => (
+                      <div key={`bank-${tr.id}`} className="pendItem">
+                        <div className="pendRow">
+                          <div className="pendMain">
+                            <div className="pendName">Transferência • {tr.propName}</div>
+                            <div className="pendSub">
+                              <b>{tr.fromName}</b> → <b>{tr.toName}</b> • {money(tr.amount)}
+                            </div>
+                          </div>
+                          <button className="miniBtn dangerMini" onClick={() => cancelPendingPropertyTransfer(tr)}>
+                            Cancelar
                           </button>
                         </div>
-                        <div className="pendNext">A propriedade é transferida pelo bancário após a confirmação do pagamento.</div>
+                        <div className="pendNext">Negociação entre jogadores ainda sem pagamento confirmado.</div>
                       </div>
                     ))}
                   </div>
@@ -4142,6 +4394,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 <Modal
   open={sellOpen}
   title="Vender propriedade"
+  variant={sellQr || sellCode ? 'scroll' : 'compact'}
   onClose={() => {
     setSellOpen(false);
     setSellPropId('');
@@ -4615,6 +4868,7 @@ function matchesQuery(p: PropertyItem, q: string) {
       <Modal
         open={transferOpen}
         title="Vender / Transferir propriedade"
+        variant={transferQrUrl || transferCode ? 'scroll' : 'compact'}
         onClose={() => {
           setTransferOpen(false);
           setTransferPropId('');
@@ -5968,10 +6222,22 @@ function matchesQuery(p: PropertyItem, q: string) {
         .pHouseItem b{font-size:13px}
 
         .pendBox{margin-top:14px;padding:12px;border:1px solid rgba(0,0,0,.08);border-radius:16px;background:#f4f7f6;color:#111;max-width:620px;box-sizing:border-box}
+        .pendTop{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
         .pendTitle{font-weight:1000;margin-bottom:4px;color:#111}
-        .pendHint{font-size:12px;opacity:.75;margin-bottom:10px;color:#333}
+        .pendHint{font-size:12px;opacity:.75;margin-bottom:0;color:#333}
         .pendList{display:grid;gap:10px;max-height:min(46dvh,430px);overflow:auto;padding-right:2px;-webkit-overflow-scrolling:touch}
         .pendItem{border:1px solid rgba(0,0,0,.10);border-radius:14px;padding:10px;background:#fff;color:#111;box-shadow:0 5px 14px rgba(0,0,0,.04)}
+        .pendActions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
+
+        /* Solicitações de compra devem parecer notificações compactas, não cards gigantes. */
+        .purchaseRequestItem{padding:8px 9px;min-height:0!important;height:auto!important;display:block!important}
+        .purchaseRequestItem .requestRow{min-height:0;align-items:center}
+        .purchaseRequestItem .pendMain{display:grid;gap:2px;min-width:0;flex:1}
+        .purchaseRequestItem .pendName{font-size:12.5px;line-height:1.2}
+        .purchaseRequestItem .pendSub{font-size:11.5px;line-height:1.25}
+        .purchaseRequestItem .pendActions{flex-wrap:nowrap;gap:5px;max-width:none}
+        .purchaseRequestItem .miniBtn{height:30px;padding:0 9px;border-radius:10px;font-size:11px}
+        .dangerMini{background:#b42318!important;color:#fff!important}
         .pendEmpty{padding:14px;border-radius:14px;background:#fff;color:#111;font-size:13px;font-weight:800;text-align:center}
         .pendRow{display:flex;align-items:center;justify-content:space-between;gap:10px}
         .pendMain{min-width:0}
@@ -5987,6 +6253,16 @@ function matchesQuery(p: PropertyItem, q: string) {
         .pendDot{width:26px;height:26px;border-radius:999px;display:grid;place-items:center;font-weight:1000;font-size:12px;border:1px solid rgba(0,0,0,.12);opacity:.75}
         .pendDot.on{opacity:1;border-color:rgba(52,199,89,.45)}
         .pendDot.next{box-shadow:0 0 0 3px rgba(122,44,255,.18);opacity:1}
+        @media (max-width:520px){
+          .pendTop{align-items:stretch;flex-direction:column}
+          .pendTop .dangerMini{width:100%}
+          .pendRow{align-items:flex-start}
+          .pendActions{max-width:48%;justify-content:flex-end}
+
+          .purchaseRequestItem .requestRow{align-items:center}
+          .purchaseRequestItem .pendActions{max-width:none;flex-wrap:nowrap}
+          .purchaseRequestItem .miniBtn{height:29px;padding:0 8px}
+        }
       
 /* ===== NOTIFICAÇÕES (Modal) ===== */
 .notiList{
