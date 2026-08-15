@@ -132,6 +132,7 @@ type RoomState = {
 type QrPayload = {
   v: 1;
   room: string;
+  paymentId: string; // id único: impede o mesmo Pix/QR de ser pago duas vezes
 
   kind: 'TRANSFER' | 'BUY_INSTALLMENT';
 
@@ -171,6 +172,15 @@ function parseMoneyBRL(text: string) {
   const n = Number(cleaned);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n);
+}
+
+function installmentAmount(total: number, installments: number, indexZeroBased: number) {
+  const count = Math.max(1, Math.floor(installments || 1));
+  const totalInt = Math.max(0, Math.round(total || 0));
+  const idx = Math.min(count - 1, Math.max(0, Math.floor(indexZeroBased || 0)));
+  const base = Math.floor(totalInt / count);
+  const remainder = totalInt % count;
+  return base + (idx < remainder ? 1 : 0);
 }
 
 
@@ -320,11 +330,11 @@ function Modal({
   background: rgba(0, 0, 0, 0.08);
   cursor: pointer;
   font-size: 16px;
-  color: #8a05be;
+  color: #0b5d4a;
   font-weight: 1000;
 }
 .mX:hover{
-  background: rgba(138, 5, 190, 0.14);
+  background: rgba(11, 93, 74, 0.14);
 }
        `}</style>
     </div>
@@ -343,7 +353,7 @@ const COLOR_HEX: Record<string, string> = {
   verde: '#22c55e',
   vermelho: '#ef4444',
   amarelo: '#eab308',
-  roxo: '#8a05be',
+  roxo: '#0b5d4a',
   'azul escuro': '#1e3a8a',
 };
 
@@ -1015,6 +1025,15 @@ const [txErr, setTxErr] = useState('');
   // confirmar pagamento
   const [confirmError, setConfirmError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [lastReceipt, setLastReceipt] = useState<{
+    id: string;
+    at: number;
+    title: string;
+    amount: number;
+    fromName: string;
+    toName: string;
+  } | null>(null);
 
   // vender propriedade (bancário)
   const [sellOpen, setSellOpen] = useState(false);
@@ -1227,7 +1246,7 @@ useEffect(() => {
         const patch: any = { online: true, lastSeen: Date.now() };
 
         if (typeof v.balance !== 'number' || v.balance <= 0) {
-          patch.balance = role === 'bancario' ? BANK_BALANCE : START_BALANCE;
+          patch.balance = role === 'bancario' ? 0 : START_BALANCE;
         }
         if (!v.status) patch.status = 'ativo';
         if (!('debtToBank' in v)) patch.debtToBank = 0;
@@ -1241,7 +1260,7 @@ useEffect(() => {
         name,
         role,
         status: 'ativo',
-        balance: role === 'bancario' ? BANK_BALANCE : START_BALANCE,
+        balance: role === 'bancario' ? 0 : START_BALANCE,
         debtToBank: 0,
         online: true,
         lastSeen: Date.now(),
@@ -1307,10 +1326,10 @@ useEffect(() => {
     return list.filter((s: any) => s?.buyerUid === uid);
   }, [salesArr, role, uid]);
 
-  function salePerInstallment(sale: any) {
+  function saleInstallmentAmount(sale: any, indexZeroBased: number) {
     const inst = Math.max(1, Number(sale?.installments || 1));
     const total = Number(sale?.total || 0);
-    return Math.ceil(total / inst);
+    return installmentAmount(total, inst, indexZeroBased);
   }
 
   async function openNextInstallmentQr(sale: any) {
@@ -1321,7 +1340,7 @@ useEffect(() => {
     if (nextIdx < 0) return;
 
     const installment = nextIdx + 1;
-    const per = salePerInstallment(sale);
+    const per = saleInstallmentAmount(sale, nextIdx);
 
     const payload = generatePayload(
       BANK_UID,
@@ -1342,7 +1361,8 @@ useEffect(() => {
 
 
   const isBlocked = me?.status === 'preso';
-  const showReceive = role === 'bancario' ? true : !isBlocked;
+  const isClosed = me?.status === 'falido' || me?.status === 'desistente';
+  const showReceive = role === 'bancario' ? true : !isBlocked && !isClosed;
 
 
   // ============ NOTIFICAÇÕES (sininho) ============
@@ -1488,6 +1508,7 @@ const myProps = useMemo(() => {
     const payload: QrPayload = {
       v: 1,
       room: roomCode,
+      paymentId: `pay-${idNow()}`,
       kind,
       toUid,
       toName,
@@ -1504,7 +1525,9 @@ const myProps = useMemo(() => {
     setRcvAmountText(money(Math.max(0, Number(rcvAmount || 0))));
 
     const amount = Math.max(0, Number(rcvAmount || 0));
-    const payload = generatePayload(uid, me.name, rcvTitle || 'Recebimento', amount, 'TRANSFER');
+    const receiverUid = role === 'bancario' ? BANK_UID : uid;
+    const receiverName = role === 'bancario' ? BANK_NAME : me.name;
+    const payload = generatePayload(receiverUid, receiverName, rcvTitle || 'Recebimento', amount, 'TRANSFER');
     const code = makeCode(payload);
 
     setGeneratedCode(code);
@@ -1554,26 +1577,32 @@ function openOnlineTransfer() {
     async function confirmPay() {
     setConfirmError('');
     if (!room || !me || !payloadToPay) return;
-    
-    if (me.balance < payloadToPay.amount) return setConfirmError('Saldo insuficiente.');
+
+    const payerUid = role === 'bancario' ? BANK_UID : uid;
+    const payerName = role === 'bancario' ? BANK_NAME : me.name;
+    const amount = Math.abs(payloadToPay.amount);
+    const paymentId = payloadToPay.paymentId || `legacy-${payloadToPay.createdAt}-${payloadToPay.toUid}-${amount}`;
+
+    if (payerUid !== BANK_UID && me.balance < amount) {
+      return setConfirmError('Saldo insuficiente.');
+    }
+    if (payerUid === payloadToPay.toUid) {
+      return setConfirmError('Origem e destino não podem ser a mesma conta.');
+    }
 
     setBusy(true);
     try {
-
-      const fromUid = uid;
-      const toUid = payloadToPay.toUid;
-      const amount = Math.abs(payloadToPay.amount);
-
-      await runTransaction(ref(db, `${roomRefBase}`), (state: any) => {
-        if (!state) return state;
+      const result = await runTransaction(ref(db, `${roomRefBase}`), (state: any) => {
+        if (!state) return;
 
         state.players = state.players || {};
+        state.processedPayments = state.processedPayments || {};
         const players = state.players;
+        const toUid = payloadToPay.toUid;
 
-        // garante pagador
-        if (!players[fromUid]) return state;
+        // Um QR/Pix só pode ser liquidado uma vez.
+        if (state.processedPayments[paymentId]) return;
 
-        // garante BANK
         if (!players[BANK_UID]) {
           players[BANK_UID] = {
             uid: BANK_UID,
@@ -1583,58 +1612,74 @@ function openOnlineTransfer() {
             balance: BANK_BALANCE,
             debtToBank: 0,
           };
-        } else {
-          players[BANK_UID].balance = BANK_BALANCE; // infinito
+        }
+        players[BANK_UID].balance = BANK_BALANCE;
+
+        if (payerUid !== BANK_UID) {
+          const payer = players[payerUid];
+          if (!payer) return;
+          if (payer.status === 'falido' || payer.status === 'desistente') return;
+          if ((payer.balance || 0) < amount) return;
         }
 
-        // garante recebedor
-        if (!players[toUid]) {
-          players[toUid] = {
-            uid: toUid,
-            name: payloadToPay.toName || 'Recebedor',
-            role: 'jogador',
-            status: 'ativo',
-            balance: 0,
-            debtToBank: 0,
-          };
+        if (toUid !== BANK_UID) {
+          const receiver = players[toUid];
+          if (!receiver) return;
+          if (receiver.status === 'falido' || receiver.status === 'desistente') return;
         }
 
-        // revalida saldo
-        if ((players[fromUid].balance || 0) < amount) return state;
-
-        players[fromUid].balance = (players[fromUid].balance || 0) - amount;
-        players[toUid].balance = (players[toUid].balance || 0) + amount;
-
-        // BUY_INSTALLMENT (compra com banco)
+        // Valida a parcela ANTES de movimentar o dinheiro.
         if (payloadToPay.kind === 'BUY_INSTALLMENT') {
           const saleId = payloadToPay.meta?.saleId as string | undefined;
-          const inst = payloadToPay.meta?.installment as number | undefined;
+          const inst = Number(payloadToPay.meta?.installment || 0);
+          if (!saleId || !Number.isFinite(inst)) return;
 
-          if (saleId && Number.isFinite(inst)) {
-            state.sales = state.sales || {};
-            const sale = state.sales[saleId];
-            if (sale && sale.status === 'pending_payment') {
-              if (sale.buyerUid === fromUid) {
-                const idx = Number(inst) - 1;
-                if (idx >= 0 && idx < sale.installments) {
-                  sale.paidInstallments = sale.paidInstallments || Array(sale.installments).fill(false);
-                  if (!sale.paidInstallments[idx]) {
-                    sale.paidInstallments[idx] = true;
-                    sale.paidCount = (sale.paidCount || 0) + 1;
-                  }
-                  if ((sale.paidCount || 0) >= sale.installments) {
-                    sale.status = 'paid_full';
-                    state.notifications = state.notifications || {};
-                    state.notifications.banker = { type: 'SALE_PAID', saleId: sale.id, at: Date.now() };
-                  }
-                  state.sales[saleId] = sale;
-                }
-              }
-            }
-          }
+          state.sales = state.sales || {};
+          const sale = state.sales[saleId];
+          if (!sale || sale.status !== 'pending_payment' || sale.buyerUid !== payerUid) return;
+
+          const idx = inst - 1;
+          if (idx < 0 || idx >= sale.installments) return;
+          sale.paidInstallments = sale.paidInstallments || Array(sale.installments).fill(false);
+          if (sale.paidInstallments[idx]) return;
+
+          const expected = installmentAmount(Number(sale.total || 0), Number(sale.installments || 1), idx);
+          if (amount !== expected) return;
         }
 
-        // FIANÇA (meta.type === 'BAIL')
+        // Valida compra entre jogadores antes de movimentar.
+        if (payloadToPay.kind === 'TRANSFER' && payloadToPay.meta?.type === 'PROP_TRANSFER') {
+          const transferId = payloadToPay.meta?.transferId as string | undefined;
+          const tr = transferId ? state.transfers?.[transferId] : null;
+          if (!tr || tr.status !== 'pending_payment' || tr.toUid !== payerUid) return;
+          if (Number(tr.amount || 0) !== amount || tr.fromUid !== toUid) return;
+        }
+
+        if (payerUid !== BANK_UID) {
+          players[payerUid].balance = (players[payerUid].balance || 0) - amount;
+        }
+        if (toUid !== BANK_UID) {
+          players[toUid].balance = (players[toUid].balance || 0) + amount;
+        }
+        players[BANK_UID].balance = BANK_BALANCE;
+
+        if (payloadToPay.kind === 'BUY_INSTALLMENT') {
+          const saleId = payloadToPay.meta?.saleId as string;
+          const inst = Number(payloadToPay.meta?.installment || 0);
+          const sale = state.sales[saleId];
+          const idx = inst - 1;
+
+          sale.paidInstallments[idx] = true;
+          sale.paidCount = sale.paidInstallments.filter(Boolean).length;
+
+          if (sale.paidCount >= sale.installments) {
+            sale.status = 'paid_full';
+            state.notifications = state.notifications || {};
+            state.notifications.banker = { type: 'SALE_PAID', saleId: sale.id, at: Date.now() };
+          }
+          state.sales[saleId] = sale;
+        }
+
         if (payloadToPay.kind === 'TRANSFER' && payloadToPay.meta?.type === 'BAIL') {
           const prisonerUid = payloadToPay.meta?.prisonerUid as string | undefined;
           if (prisonerUid) {
@@ -1643,29 +1688,33 @@ function openOnlineTransfer() {
           }
         }
 
-        // TRANSFERÊNCIA DE PROPRIEDADE ENTRE JOGADORES (meta.type === 'PROP_TRANSFER')
         if (payloadToPay.kind === 'TRANSFER' && payloadToPay.meta?.type === 'PROP_TRANSFER') {
-          const transferId = payloadToPay.meta?.transferId as string | undefined;
-          if (transferId) {
-            state.transfers = state.transfers || {};
-            const tr = state.transfers[transferId];
-            if (tr && tr.status === 'pending_payment') {
-              // confere que quem pagou é o comprador
-              if (tr.toUid === fromUid) {
-                tr.status = 'paid';
-                state.transfers[transferId] = tr;
-                state.notifications = state.notifications || {};
-                state.notifications.banker = { type: 'TRANSFER_PAID', transferId, at: Date.now() };
-              }
-            }
-          }
+          const transferId = payloadToPay.meta?.transferId as string;
+          const tr = state.transfers[transferId];
+          tr.status = 'paid';
+          state.transfers[transferId] = tr;
+          state.notifications = state.notifications || {};
+          state.notifications.banker = { type: 'TRANSFER_PAID', transferId, at: Date.now() };
         }
+
+        state.processedPayments[paymentId] = {
+          id: paymentId,
+          at: Date.now(),
+          fromUid: payerUid,
+          toUid,
+          amount,
+          title: payloadToPay.title,
+        };
 
         state.players = players;
         return state;
       });
 
-      // ledger
+      if (!result.committed) {
+        setConfirmError('Este Pix já foi pago, expirou ou não é mais válido.');
+        return;
+      }
+
       const meta = payloadToPay.meta;
       const kindPaid: LedgerItem['kind'] =
         payloadToPay.kind === 'BUY_INSTALLMENT'
@@ -1679,45 +1728,48 @@ function openOnlineTransfer() {
       const kindReceived: LedgerItem['kind'] =
         payloadToPay.kind === 'BUY_INSTALLMENT'
           ? 'venda'
-          : meta?.type === 'BAIL'
-          ? 'recebido'
           : meta?.type === 'RENT'
           ? 'aluguel'
           : 'recebido';
 
       const finalTitle = role === 'bancario' && payReason ? `${payReason} • ${payloadToPay.title}` : payloadToPay.title;
+      const receiverName =
+        payloadToPay.toUid === BANK_UID
+          ? BANK_NAME
+          : room.players[payloadToPay.toUid]?.name || payloadToPay.toName || 'Recebedor';
 
       await pushLedgerPair({
         title: finalTitle,
         amount,
-        fromUid,
-        fromName: room.players[fromUid]?.name || me.name,
-        toUid,
-        toName: room.players[toUid]?.name || payloadToPay.toName || 'Recebedor',
+        fromUid: payerUid,
+        fromName: payerName,
+        toUid: payloadToPay.toUid,
+        toName: receiverName,
         kindPaid,
         kindReceived,
-        meta: payloadToPay.meta,
+        meta: { ...(payloadToPay.meta || {}), paymentId },
       });
 
-      setBusy(false);
+      setLastReceipt({
+        id: paymentId,
+        at: Date.now(),
+        title: finalTitle,
+        amount,
+        fromName: payerName,
+        toName: receiverName,
+      });
+      setReceiptOpen(true);
       setPayloadToPay(null);
       setConfirmOpen(false);
       setPayOpen(false);
       setPayReason('');
     } catch (e: any) {
-  setBusy(false);
-
-  console.error('AUTH ERROR:', e?.code, e?.message);
-
-  if (e?.code === 'auth/wrong-password') {
-    setConfirmError('Senha incorreta.');
-  } else if (e?.code === 'auth/user-mismatch') {
-    setConfirmError('Sessão inválida. Faça login novamente.');
-  } else {
-    setConfirmError('Erro ao confirmar pagamento.');
+      console.error('PAYMENT ERROR:', e?.code, e?.message);
+      setConfirmError('Não foi possível concluir o pagamento.');
+    } finally {
+      setBusy(false);
+    }
   }
-  }
-}
 
 /* ============ VENDA DE PROPRIEDADE (bancário) ============ */
 
@@ -1751,7 +1803,7 @@ function openOnlineTransfer() {
       if (!buyer) throw new Error('Selecione um jogador.');
 
       const installments = sellMode === 'avista' ? 1 : Math.min(6, Math.max(2, sellInstallments));
-      const perInstallment = Math.ceil(prop.price / installments);
+      const perInstallment = installmentAmount(prop.price, installments, 0);
 
       const saleId = `sale-${idNow()}`;
 
@@ -1998,6 +2050,105 @@ function openOnlineTransfer() {
     setPendingTransfer(null);
   }
 
+
+  async function liquidatePlayer(playerUid: string, status: 'falido' | 'desistente') {
+    if (role !== 'bancario' || !room || playerUid === BANK_UID) return;
+    const player = room.players?.[playerUid];
+    if (!player) return;
+
+    const label = status === 'falido' ? 'declarar falência' : 'registrar desistência';
+    if (!window.confirm(`Deseja ${label} de ${player.name}? O saldo e todas as propriedades voltarão ao Banco.`)) return;
+
+    const oldBalance = Math.max(0, Number(player.balance || 0));
+
+    const result = await runTransaction(ref(db, `${roomRefBase}`), (state: any) => {
+      if (!state?.players?.[playerUid]) return;
+
+      const target = state.players[playerUid];
+      target.status = status;
+      target.balance = 0;
+      target.debtToBank = 0;
+      target.online = false;
+      target.lastSeen = Date.now();
+
+      const props: PropertyItem[] = state.properties || [];
+      state.properties = props.map((prop) =>
+        prop.ownerUid === playerUid
+          ? { ...prop, ownerUid: BANK_UID, houses: 0, hasHotel: false, mortgaged: false }
+          : prop
+      );
+
+      if (state.sales) {
+        Object.values(state.sales).forEach((sale: any) => {
+          if (sale?.buyerUid === playerUid && sale.status !== 'transferred') sale.status = 'cancelled';
+        });
+      }
+
+      if (state.transfers) {
+        Object.values(state.transfers).forEach((tr: any) => {
+          if ((tr?.fromUid === playerUid || tr?.toUid === playerUid) && tr.status !== 'transferred') {
+            tr.status = 'cancelled';
+          }
+        });
+      }
+
+      if (state.players[BANK_UID]) state.players[BANK_UID].balance = BANK_BALANCE;
+      return state;
+    });
+
+    if (result.committed && oldBalance > 0) {
+      await pushLedgerPair({
+        title: status === 'falido' ? 'Liquidação por falência' : 'Encerramento por desistência',
+        amount: oldBalance,
+        fromUid: playerUid,
+        fromName: player.name,
+        toUid: BANK_UID,
+        toName: BANK_NAME,
+        kindPaid: 'ajuste',
+        kindReceived: 'recebido',
+        meta: { type: 'ACCOUNT_LIQUIDATION', status },
+      });
+    }
+  }
+
+  async function bankerBuyBackProperty(prop: PropertyItem) {
+    if (role !== 'bancario' || !room || prop.ownerUid === BANK_UID) return;
+    const owner = room.players?.[prop.ownerUid];
+    if (!owner) return;
+    const value = Math.max(0, Number(prop.sellValue || 0));
+
+    if (!window.confirm(`Recomprar ${prop.name} de ${owner.name} por ${money(value)}?`)) return;
+
+    const result = await runTransaction(ref(db, `${roomRefBase}`), (state: any) => {
+      if (!state?.players?.[owner.uid]) return;
+      const props: PropertyItem[] = state.properties || [];
+      const idx = props.findIndex((p) => p.id === prop.id);
+      if (idx < 0 || props[idx].ownerUid !== owner.uid) return;
+
+      if (state.players[owner.uid].status === 'falido' || state.players[owner.uid].status === 'desistente') return;
+
+      state.players[owner.uid].balance = (state.players[owner.uid].balance || 0) + value;
+      props[idx] = { ...props[idx], ownerUid: BANK_UID, houses: 0, hasHotel: false, mortgaged: false };
+      state.properties = props;
+      if (state.players[BANK_UID]) state.players[BANK_UID].balance = BANK_BALANCE;
+      return state;
+    });
+
+    if (result.committed) {
+      await pushLedgerPair({
+        title: `Recompra • ${prop.name}`,
+        amount: value,
+        fromUid: BANK_UID,
+        fromName: BANK_NAME,
+        toUid: owner.uid,
+        toName: owner.name,
+        kindPaid: 'compra',
+        kindReceived: 'venda',
+        meta: { type: 'BANK_BUYBACK', propId: prop.id },
+      });
+    }
+  }
+
   /* ============ UI helpers ============ */
   function goTo(id: string) {
     if (id === 'ledger') setFocus('ledger');
@@ -2110,7 +2261,7 @@ async function finalizeGameNow() {
               cy="50"
               r="38"
               fill="none"
-              stroke="rgba(138, 5, 190, 0.2)"
+              stroke="rgba(11, 93, 74, 0.2)"
               strokeWidth="8"
             />
             <circle
@@ -2118,7 +2269,7 @@ async function finalizeGameNow() {
               cy="50"
               r="38"
               fill="none"
-              stroke="rgba(138, 5, 190, 1)"
+              stroke="rgba(11, 93, 74, 1)"
               strokeWidth="8"
               strokeLinecap="round"
               strokeDasharray="60 200"
@@ -2222,10 +2373,11 @@ function matchesQuery(p: PropertyItem, q: string) {
 </div>
         </div>
 
-        <div className="hello">Olá, {name}</div>
+        <div className="hello">{role === 'bancario' ? 'Painel do Banco' : `Olá, ${name}`}</div>
         <div className="sub">
-          Sala <b>{roomCode}</b> • {role === 'bancario' ? 'Bancário' : 'Jogador'}
+          Banco Imobiliário Pay • Sala <b>{roomCode}</b> • {role === 'bancario' ? 'Operador do Banco' : 'Conta da partida'}
         </div>
+        <div className="gameOnly">AMBIENTE DE JOGO • SEM DINHEIRO REAL</div>
       </header>
 
       <section className="page">
@@ -2235,13 +2387,18 @@ function matchesQuery(p: PropertyItem, q: string) {
             
 
             <div>
-              <div className="label">Conta</div>
-              <div className="balRow"><div className={"balance" + (hideBalance ? " blur" : "")}>{money(me.balance)}</div>
+              <div className="label">{role === 'bancario' ? 'Caixa do Banco' : 'Conta da partida'}</div>
+              <div className="balRow"><div className={"balance" + (hideBalance ? " blur" : "")}>{role === 'bancario' ? '∞' : money(me.balance)}</div>
               <button type="button" className="eyeBtn" onClick={() => setHideBalance((v) => !v)}>{hideBalance ? "👁️" : "👁️‍🗨️"}
               </button>
               </div>
               {isBlocked && role === 'jogador' && (
                 <div className="blocked">Você está preso. Você NÃO consegue “Receber”. Só o bancário libera com Habeas ou Fiança.</div>
+              )}
+              {isClosed && role === 'jogador' && (
+                <div className="blocked">
+                  Conta encerrada por {me.status === 'falido' ? 'falência' : 'desistência'}. Saldo e propriedades foram liquidados para o Banco.
+                </div>
               )}
             
                           {/* PENDÊNCIAS / PARCELAS */}
@@ -2259,8 +2416,8 @@ function matchesQuery(p: PropertyItem, q: string) {
                       const inst = Math.max(1, Number(s?.installments || 1));
                       const paidArr: boolean[] = Array.isArray(s?.paidInstallments) ? s.paidInstallments : Array(inst).fill(false);
                       const paidCount = paidArr.filter(Boolean).length;
-                      const per = salePerInstallment(s);
                       const nextIdx = paidArr.findIndex((v) => !v);
+                      const per = saleInstallmentAmount(s, Math.max(0, nextIdx));
 
                       return (
                         <div key={s.id} className="pendItem">
@@ -2270,11 +2427,11 @@ function matchesQuery(p: PropertyItem, q: string) {
                               <div className="pendSub">
                                 {role === 'bancario' ? (
                                   <span>
-                                    <b>{s.buyerName}</b> • {paidCount}/{inst} pagas • {money(per)} por parcela
+                                    <b>{s.buyerName}</b> • {paidCount}/{inst} pagas • próxima {money(per)}
                                   </span>
                                 ) : (
                                   <span>
-                                    {paidCount}/{inst} pagas • {money(per)} por parcela
+                                    {paidCount}/{inst} pagas • próxima {money(per)}
                                   </span>
                                 )}
                               </div>
@@ -2328,13 +2485,17 @@ function matchesQuery(p: PropertyItem, q: string) {
           </div>
 
           <div className="actions">
-            <button className="act" onClick={() => {
-              if (role === 'bancario') {
-                setBankPayMenuOpen((v) => !v);
-              } else {
-                openPay();
-              }
-            }}>
+            <button
+              className={`act ${role === 'jogador' && isClosed ? 'disabled' : ''}`}
+              disabled={role === 'jogador' && isClosed}
+              onClick={() => {
+                if (role === 'bancario') {
+                  setBankPayMenuOpen((v) => !v);
+                } else {
+                  openPay();
+                }
+              }}
+            >
               <span className="ico">
                 <IconPay />
               </span>
@@ -2369,9 +2530,10 @@ function matchesQuery(p: PropertyItem, q: string) {
             )}
 
 <button
-  className="act"
+  className={`act ${role === 'jogador' && isClosed ? 'disabled' : ''}`}
+  disabled={role === 'jogador' && isClosed}
   onClick={() => {
-    setTxTitle('Transação');
+    setTxTitle('Transferência');
     setTxAmount(0);
     setTxAmountText(money(0));
     setTxToUid('');
@@ -2382,7 +2544,7 @@ function matchesQuery(p: PropertyItem, q: string) {
   <span className="ico">
     <IconPix />
   </span>
-  <span>Transação</span>
+  <span>Transferir</span>
 </button>
 
 
@@ -2454,9 +2616,17 @@ function matchesQuery(p: PropertyItem, q: string) {
                       </button>
                       <button
                         className="pillBtn danger"
-                        onClick={() => update(ref(db, `${roomRefBase}/players/${p.uid}`), { status: 'falido', balance: 0 })}
+                        onClick={() => liquidatePlayer(p.uid, 'falido')}
+                        disabled={p.status === 'falido' || p.status === 'desistente'}
                       >
                         Falência
+                      </button>
+                      <button
+                        className="pillBtn ghost"
+                        onClick={() => liquidatePlayer(p.uid, 'desistente')}
+                        disabled={p.status === 'falido' || p.status === 'desistente'}
+                      >
+                        Desistiu
                       </button>
                     </div>
                   </div>
@@ -2584,18 +2754,25 @@ function matchesQuery(p: PropertyItem, q: string) {
   </button>
 
   {role === 'bancario' ? (
-  <button
-    className={"pBtn" + (sold ? " disabled" : "")}
-    type="button"
-    disabled={sold}
-    title={sold ? "Já vendida" : "Vender para jogador (gera QR)"}
-    onClick={() => {
-      if (sold) return;
-      openSell(p.id);
-    }}
-  >
-    {sold ? "VENDIDA" : "VENDER"}
-  </button>
+  sold ? (
+    <button
+      className="pBtn ghost"
+      type="button"
+      title="Banco recompra a propriedade pelo valor de venda"
+      onClick={() => bankerBuyBackProperty(p)}
+    >
+      RECOMPRAR
+    </button>
+  ) : (
+    <button
+      className="pBtn"
+      type="button"
+      title="Vender para jogador (gera Pix)"
+      onClick={() => openSell(p.id)}
+    >
+      VENDER
+    </button>
+  )
 ) : (
   <button className="pBtn disabled" type="button" disabled title="Só o bancário vende e gera o QR">
     VENDER
@@ -2820,7 +2997,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 {/* ===== MODAL: TRANSAÇÃO ONLINE (sem QR) ===== */}
 <Modal
   open={txOpen}
-  title="Transação"
+  title="Transferência bancária"
   onClose={() => {
     setTxOpen(false);
     setTxErr('');
@@ -2842,7 +3019,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 
   <div className="field">
     <div className="lab">Motivo</div>
-    <input className="inp" value={txTitle} onChange={(e) => setTxTitle(e.target.value)} placeholder="Ex: pagamento" />
+    <input className="inp" value={txTitle} onChange={(e) => setTxTitle(e.target.value)} placeholder="Ex: Pix, acerto da rodada, negociação" />
   </div>
 
 <div className="field">
@@ -2868,7 +3045,7 @@ function matchesQuery(p: PropertyItem, q: string) {
   />
 
   <button className="btn primary" onClick={openOnlineTransfer}>
-    Enviar
+    Transferir agora
   </button>
 
   {txErr && <div className="err">{txErr}</div>}
@@ -2909,6 +3086,29 @@ function matchesQuery(p: PropertyItem, q: string) {
   {busy ? 'Processando...' : 'Confirmar'}
 </button>
           </>
+        )}
+      </Modal>
+
+      <Modal
+        open={receiptOpen}
+        title="Pix realizado"
+        onClose={() => setReceiptOpen(false)}
+      >
+        {lastReceipt && (
+          <div className="receipt">
+            <div className="receiptOk">✓</div>
+            <div className="receiptTitle">Pagamento concluído</div>
+            <div className="receiptAmount">{money(lastReceipt.amount)}</div>
+            <div className="sum">
+              <div className="li2"><span>De</span><b>{lastReceipt.fromName}</b></div>
+              <div className="li2"><span>Para</span><b>{lastReceipt.toName}</b></div>
+              <div className="li2"><span>Descrição</span><b>{lastReceipt.title}</b></div>
+              <div className="li2"><span>Data</span><b>{new Date(lastReceipt.at).toLocaleString('pt-BR')}</b></div>
+              <div className="li2"><span>ID</span><b className="receiptId">{lastReceipt.id}</b></div>
+            </div>
+            <div className="mHint">Comprovante da partida. Nenhum dinheiro real foi movimentado.</div>
+            <button className="btn primary" onClick={() => setReceiptOpen(false)}>Concluir</button>
+          </div>
         )}
       </Modal>
 
@@ -3039,7 +3239,7 @@ function matchesQuery(p: PropertyItem, q: string) {
                   </select>
                   <div className="mHint">
                     Vai ficar <b>{Math.min(6, Math.max(2, sellInstallments))}x</b> de{' '}
-                    <b>{money(Math.ceil(prop.price / Math.min(6, Math.max(2, sellInstallments))))}</b>.
+                    <b>{money(installmentAmount(prop.price, Math.min(6, Math.max(2, sellInstallments)), 0))}</b>.
                   </div>
 
                 </div>
@@ -3303,32 +3503,19 @@ function matchesQuery(p: PropertyItem, q: string) {
   <button
     className="btn primary"
     onClick={() => {
-      // fecha modal de aluguel
-      setRentOpen(false);
-
-      // prepara transação
-      setTxTitle(`Aluguel • ${prop.name}`);
-      setTxAmount(
+      const amount =
         prop.kind === 'MULTIPLIER'
-          ? (prop.multiplierValue || 0) * rentDiceSum
-          : prop.baseRent || 0
-      );
-      setTxAmountText(
-        money(
-          prop.kind === 'MULTIPLIER'
-            ? (prop.multiplierValue || 0) * rentDiceSum
-            : prop.baseRent || 0
-        )
-      );
-
-      // quem vai pagar: dono atual da rodada (jogador que caiu)
-      setTxToUid('');
-
-      setTxErr('');
-      setTxOpen(true);
+          ? (prop.multiplierValue || 0) * Math.max(0, Number(rentDiceSum || 0))
+          : prop.baseRent || 0;
+      generateRentQr(amount, `${titleBase} • Cobrança rápida`, {
+        type: 'RENT',
+        propId: prop.id,
+        tier: prop.kind === 'MULTIPLIER' ? 'dice' : 'base',
+        diceSum: prop.kind === 'MULTIPLIER' ? rentDiceSum : undefined,
+      });
     }}
   >
-    Cobrar aluguel por transação
+    Gerar cobrança Pix
   </button>
 
   <button
@@ -3576,12 +3763,12 @@ function matchesQuery(p: PropertyItem, q: string) {
       <style jsx>{`
         .wrap {
           min-height: 100vh;
-          background: #f2f2f7;
+          background: #eef3f1;
           font-family: system-ui;
         }
 
         .header {
-          background: linear-gradient(160deg, #8a05be 0%, #6a00a8 55%, #4b0082 100%);
+          background: linear-gradient(160deg, #0b5d4a 0%, #08483b 55%, #052f28 100%);
           color: #fff;
           padding: 18px 18px 22px;
           border-bottom-left-radius: 22px;
@@ -3664,6 +3851,54 @@ function matchesQuery(p: PropertyItem, q: string) {
           opacity: 0.9;
         }
 
+        .gameOnly {
+          margin-top: 10px;
+          display: inline-flex;
+          width: fit-content;
+          font-size: 9px;
+          font-weight: 1000;
+          letter-spacing: .9px;
+          padding: 5px 8px;
+          border-radius: 999px;
+          background: rgba(255,255,255,.12);
+          border: 1px solid rgba(255,255,255,.18);
+          opacity: .88;
+        }
+
+        .receipt {
+          display: grid;
+          gap: 12px;
+          text-align: center;
+        }
+        .receiptOk {
+          width: 58px;
+          height: 58px;
+          border-radius: 999px;
+          display: grid;
+          place-items: center;
+          margin: 0 auto;
+          background: #e7f7f1;
+          color: #0b5d4a;
+          font-size: 30px;
+          font-weight: 1000;
+        }
+        .receiptTitle {
+          font-size: 15px;
+          font-weight: 1000;
+          color: #17322c;
+        }
+        .receiptAmount {
+          font-size: 28px;
+          font-weight: 1100;
+          color: #071f1a;
+        }
+        .receiptId {
+          max-width: 180px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
         .page {
           padding: 14px 14px 22px;
           max-width: 980px;
@@ -3674,9 +3909,10 @@ function matchesQuery(p: PropertyItem, q: string) {
 
         .card {
           background: #fff;
-          border-radius: 18px;
-          padding: 14px;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+          border-radius: 20px;
+          padding: 16px;
+          border: 1px solid rgba(11, 93, 74, .08);
+          box-shadow: 0 12px 34px rgba(6, 47, 40, 0.07);
           display: grid;
           gap: 12px;
         }
@@ -3777,9 +4013,9 @@ function matchesQuery(p: PropertyItem, q: string) {
           border-radius: 999px;
           display: grid;
           place-items: center;
-          background: rgba(138, 5, 190, 0.14);
-          color: #6a00a8;
-          border: 1px solid rgba(138, 5, 190, 0.16);
+          background: rgba(11, 93, 74, 0.14);
+          color: #08483b;
+          border: 1px solid rgba(11, 93, 74, 0.16);
         }
 
         .adminList {
@@ -3829,7 +4065,7 @@ function matchesQuery(p: PropertyItem, q: string) {
         }
         .pillBtn {
           border: none;
-          background: #8a05be;
+          background: #0b5d4a;
           color: #fff;
           font-weight: 1000;
           padding: 10px 12px;
@@ -3838,9 +4074,9 @@ function matchesQuery(p: PropertyItem, q: string) {
           font-size: 12px;
         }
         .pillBtn.ghost {
-          background: rgba(138, 5, 190, 0.12);
-          color: #6a00a8;
-          border: 1px solid rgba(138, 5, 190, 0.18);
+          background: rgba(11, 93, 74, 0.12);
+          color: #08483b;
+          border: 1px solid rgba(11, 93, 74, 0.18);
         }
         .pillBtn.danger {
           background: rgba(239, 68, 68, 0.12);
@@ -3859,13 +4095,13 @@ function matchesQuery(p: PropertyItem, q: string) {
           background: transparent;
           cursor: pointer;
           font-weight: 1000;
-          color: #6a00a8;
+          color: #08483b;
           font-size: 12px;
           padding: 6px 10px;
           border-radius: 12px;
         }
         .linkBtn:hover {
-          background: rgba(138, 5, 190, 0.08);
+          background: rgba(11, 93, 74, 0.08);
         }
 
         .propGrid {
@@ -4033,7 +4269,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 }
 .pBtn.ghost{
   background:rgba(138,5,190,.12);
-  color:#6a00a8;
+  color:#08483b;
   border:1px solid rgba(138,5,190,.22);
   box-shadow:none;
 }
@@ -4227,7 +4463,7 @@ function matchesQuery(p: PropertyItem, q: string) {
           color: #222;
         }
         .btn.primary {
-          background: #8a05be;
+          background: #0b5d4a;
           color: #fff;
           border: none;
         }
@@ -4327,9 +4563,9 @@ function matchesQuery(p: PropertyItem, q: string) {
           color: #444;
         }
         .segBtn.active {
-          background: #8a05be;
+          background: #0b5d4a;
           color: #fff;
-          border-color: #8a05be;
+          border-color: #0b5d4a;
         }
 
         .gridRent {

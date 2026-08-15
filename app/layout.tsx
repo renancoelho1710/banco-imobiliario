@@ -13,18 +13,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Banco Imobiliário",
-  description: "App de banco para partidas de Banco Imobiliário",
+  title: "Banco Imobiliário Pay",
+  description: "Conta digital da partida: Pix, transferências, propriedades e extrato do Banco Imobiliário.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Banco",
+    title: "BI Pay",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0B1220",
+  themeColor: "#0b5d4a",
 };
 
 export default function RootLayout({

@@ -353,7 +353,8 @@ export default function Page() {
       </Modal>
 
       <section className="panel">
-        <h1>Banco Imobiliário</h1>
+        <h1>Banco Imobiliário Pay</h1>
+        <p className="gameTag">Sua conta digital da partida • sem dinheiro real</p>
 
         <div className="seg">
           <button
@@ -438,9 +439,9 @@ export default function Page() {
           place-items: center;
           background: linear-gradient(
             160deg,
-            #8a05be 0%,
-            #6a00a8 45%,
-            #4b0082 100%
+            #0b5d4a 0%,
+            #08483b 45%,
+            #052f28 100%
           );
           font-family: system-ui;
           padding: 18px;
@@ -485,9 +486,9 @@ export default function Page() {
           color: #fff;
           background: linear-gradient(
             160deg,
-            #8a05be 0%,
-            #6a00a8 55%,
-            #4b0082 100%
+            #0b5d4a 0%,
+            #08483b 55%,
+            #052f28 100%
           );
           box-shadow: 0 14px 40px rgba(106, 0, 168, 0.22);
           animation: unspin 0.9s linear infinite;
@@ -528,6 +529,14 @@ export default function Page() {
           color: #2d2d2d;
         }
 
+        .gameTag {
+          margin: 0 0 10px;
+          text-align: center;
+          color: #6b7c76;
+          font-size: 11px;
+          font-weight: 700;
+        }
+
         input {
           padding: 13px 14px;
           border-radius: 14px;
@@ -560,13 +569,13 @@ export default function Page() {
         }
 
         .active {
-          background: #8a05be !important;
+          background: #0b5d4a !important;
           color: #fff !important;
-          border-color: #8a05be !important;
+          border-color: #0b5d4a !important;
         }
 
         .primary {
-          background: #8a05be;
+          background: #0b5d4a;
           color: #fff;
           padding: 12px;
           border-radius: 16px;
@@ -583,7 +592,7 @@ export default function Page() {
   background: none;
   border: none;
   font-size: 12px;
-  color: #6a00a8;
+  color: #08483b;
   text-decoration: underline;
   cursor: pointer;
   justify-self: center;
@@ -591,7 +600,7 @@ export default function Page() {
 }
 
 .forgot:hover {
-  color: #8a05be;
+  color: #0b5d4a;
 }
         .error {
           background: rgba(0, 0, 0, 0.35);
@@ -637,7 +646,7 @@ export default function Page() {
 
         .danger {
           border: none;
-          background: #6a00a8;
+          background: #08483b;
           color: #fff;
           padding: 10px 12px;
           border-radius: 12px;

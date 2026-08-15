@@ -1,11 +1,11 @@
 {
-  "name": "Banco Imobiliário",
-  "short_name": "Banco",
-  "description": "App de banco para partidas de Banco Imobiliário",
+  "name": "Banco Imobiliário Pay",
+  "short_name": "BI Pay",
+  "description": "Conta digital da partida: Pix, transferências, propriedades e extrato.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0B1220",
-  "theme_color": "#0B1220",
+  "background_color": "#eef3f1",
+  "theme_color": "#0b5d4a",
   "icons": [
     { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "/icons/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" },
