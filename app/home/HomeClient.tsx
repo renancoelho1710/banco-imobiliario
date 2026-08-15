@@ -249,22 +249,64 @@ function transferPaidBankSaleInState(state: any, sale: any) {
 }
 
 
-function playBeep(kind: 'notif' | 'warn' = 'notif') {
-  // Som simples sem assets (beep)
+type BankSound = 'pix' | 'transfer' | 'request' | 'success' | 'warn';
+
+let bankAudioContext: any = null;
+
+function getBankAudioContext() {
+  if (typeof window === 'undefined') return null;
   try {
     const Ctx: any = (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = 'sine';
-    o.frequency.value = kind === 'warn' ? 440 : 880;
-    g.gain.value = 0.05;
-    o.connect(g);
-    g.connect(ctx.destination);
-    o.start();
-    o.stop(ctx.currentTime + 0.06);
+    if (!Ctx) return null;
+    if (!bankAudioContext) bankAudioContext = new Ctx();
+    return bankAudioContext;
+  } catch {
+    return null;
+  }
+}
+
+async function unlockBankAudio() {
+  const ctx = getBankAudioContext();
+  if (!ctx) return;
+  try {
+    if (ctx.state === 'suspended') await ctx.resume();
   } catch {}
+}
+
+function playBankSound(kind: BankSound = 'success') {
+  try {
+    const ctx = getBankAudioContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+
+    const patterns: Record<BankSound, Array<[number, number, number]>> = {
+      pix: [[740, 0.00, 0.075], [980, 0.09, 0.09], [1240, 0.19, 0.12]],
+      transfer: [[520, 0.00, 0.08], [660, 0.10, 0.08], [820, 0.20, 0.11]],
+      request: [[880, 0.00, 0.07], [880, 0.12, 0.07]],
+      success: [[660, 0.00, 0.08], [880, 0.10, 0.11]],
+      warn: [[420, 0.00, 0.10], [350, 0.13, 0.13]],
+    };
+
+    patterns[kind].forEach(([frequency, delay, duration]) => {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const start = ctx.currentTime + delay;
+      const end = start + duration;
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.045, start + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, end);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start(start);
+      oscillator.stop(end + 0.02);
+    });
+  } catch {}
+}
+
+function playBeep(kind: 'notif' | 'warn' = 'notif') {
+  playBankSound(kind === 'warn' ? 'warn' : 'success');
 }
 
 function makeCode(payload: QrPayload) {
@@ -349,22 +391,55 @@ function Modal({
   padding: 12px;
   box-shadow: 0 24px 70px rgba(0,0,0,.35);
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, auto);
   gap: 10px;
-  max-height: calc(100vh - 36px);
+  max-height: calc(100dvh - 36px);
   overflow: hidden;
+  color: #111;
 }
 
 .mBody{
   display: grid;
   gap: 10px;
-  overflow: auto; /* modo normal pode rolar */
+  overflow: auto;
+  align-content: start;
+  max-height: calc(100dvh - 110px);
   -webkit-overflow-scrolling: touch;
+  color: #111;
+}
+
+/* Todo conteúdo em superfície branca deve ser legível em preto. */
+.mCard,
+.mCard .mHead,
+.mCard .mBody,
+.mCard .sum,
+.mCard .li2,
+.mCard .field,
+.mCard .lab,
+.mCard .mHint,
+.mCard .empty,
+.mCard .qrBox,
+.mCard .qrCode,
+.mCard .pixCode,
+.mCard .pendItem,
+.mCard .pendName,
+.mCard .pendSub,
+.mCard .pendNext,
+.mCard .notifItem,
+.mCard .notifTitle,
+.mCard .muted,
+.mCard .inp,
+.mCard .ta,
+.mCard select.inp,
+.mCard .segBtn:not(.active),
+.mCard .btn:not(.primary) {
+  color: #111 !important;
 }
 
 /* ===== MODO “SEM ROLAGEM” ===== */
 .mCard.mFit{
-  max-height: min(640px, calc(100vh - 36px));
+  width: min(460px, 100%);
+  max-height: min(640px, calc(100dvh - 36px));
 }
 
 .mCard.mFit .mBody{
@@ -1118,6 +1193,7 @@ const [txErr, setTxErr] = useState('');
     amount: number;
     fromName: string;
     toName: string;
+    method: 'pix' | 'bank_transfer' | 'cash';
   } | null>(null);
 
   // vender propriedade (bancário)
@@ -1188,6 +1264,8 @@ const [txErr, setTxErr] = useState('');
   const [notifUnread, setNotifUnread] = useState(0);
   const [focus, setFocus] = useState<'home' | 'props' | 'ledger' | 'pend'>('home');
   const lastNotifAtRef = useRef<number>(Date.now());
+  const seenPurchaseRequestIdsRef = useRef<Set<string> | null>(null);
+  const seenChargeIdsRef = useRef<Set<string> | null>(null);
 // finalizar partida (só bancário)
 const [endGameOpen, setEndGameOpen] = useState(false);
 const [endWinnerUid, setEndWinnerUid] = useState('');
@@ -1197,6 +1275,16 @@ const [endErr, setEndErr] = useState('');
 
 const [gameEndedOpen, setGameEndedOpen] = useState(false);
 const [gameEndedData, setGameEndedData] = useState<any>(null);
+
+useEffect(() => {
+  const unlock = () => { void unlockBankAudio(); };
+  window.addEventListener('pointerdown', unlock, { passive: true });
+  window.addEventListener('touchstart', unlock, { passive: true });
+  return () => {
+    window.removeEventListener('pointerdown', unlock);
+    window.removeEventListener('touchstart', unlock);
+  };
+}, []);
 
   /* ============ bootstrap ============ */
 useEffect(() => {
@@ -1422,11 +1510,39 @@ useEffect(() => {
     return propsAll.filter((prop) => prop.ownerUid === BANK_UID && !active.has(prop.id));
   }, [propsAll, salesArr]);
 
+  const validPendingSalesBase = useMemo(() => {
+    return salesArr.filter((sale: any) => {
+      if (!sale || (sale.status !== 'pending_payment' && sale.status !== 'paid_full')) return false;
+
+      const buyer = room?.players?.[sale.buyerUid];
+      const prop = propsAll.find((item) => item.id === sale.propId);
+      if (!buyer || !prop) return false;
+      if (buyer.status === 'falido' || buyer.status === 'desistente') return false;
+
+      const installments = Math.max(1, Number(sale.installments || 1));
+      const paidArr: boolean[] = Array.isArray(sale.paidInstallments)
+        ? sale.paidInstallments
+        : Array(installments).fill(false);
+      const paidCount = paidArr.filter(Boolean).length;
+
+      // Se o imóvel já foi para o comprador, não existe mais pendência mesmo que
+      // algum registro antigo tenha ficado como pending_payment/paid_full no Firebase.
+      if (prop.ownerUid === sale.buyerUid) return false;
+
+      // Venda do Banco só pode continuar pendente enquanto o imóvel ainda for do Banco.
+      if (prop.ownerUid !== BANK_UID) return false;
+
+      // Registro completamente pago não deve virar contador fantasma para o jogador.
+      if (paidCount >= installments && sale.status !== 'paid_full') return false;
+
+      return true;
+    });
+  }, [salesArr, room, propsAll]);
+
   const pendingSales = useMemo(() => {
-    const list = salesArr.filter((s: any) => s?.status === 'pending_payment' || s?.status === 'paid_full');
-    if (role === 'bancario') return list;
-    return list.filter((s: any) => s?.buyerUid === uid);
-  }, [salesArr, role, uid]);
+    if (role === 'bancario') return validPendingSalesBase;
+    return validPendingSalesBase.filter((s: any) => s?.buyerUid === uid);
+  }, [validPendingSalesBase, role, uid]);
 
   const purchaseRequestsArr = useMemo(() => {
     const raw: any = (room as any)?.purchaseRequests;
@@ -1436,8 +1552,24 @@ useEffect(() => {
   }, [room]);
 
   const pendingPurchaseRequests = useMemo(() => {
-    return purchaseRequestsArr.filter((r) => r.status === 'requested');
-  }, [purchaseRequestsArr]);
+    return purchaseRequestsArr.filter((request) => {
+      if (request.status !== 'requested') return false;
+      const buyer = room?.players?.[request.buyerUid];
+      const prop = propsAll.find((item) => item.id === request.propId);
+      if (!buyer || !prop || prop.ownerUid !== BANK_UID) return false;
+      if (buyer.status === 'falido' || buyer.status === 'desistente') return false;
+
+      // Quando o Banco já criou a cobrança/venda para esse pedido, a solicitação
+      // deixa de ser uma segunda pendência visual da mesma compra.
+      const alreadyHandled = validPendingSalesBase.some(
+        (sale: any) =>
+          sale.buyerUid === request.buyerUid &&
+          sale.propId === request.propId &&
+          (!sale.requestId || sale.requestId === request.id)
+      );
+      return !alreadyHandled;
+    });
+  }, [purchaseRequestsArr, room, propsAll, validPendingSalesBase]);
 
   const myPendingPurchaseRequests = useMemo(() => {
     if (role !== 'jogador') return [] as PurchaseRequestDoc[];
@@ -1458,10 +1590,103 @@ useEffect(() => {
 
   const pendingBankPropertyTransfers = useMemo(() => {
     if (role !== 'jogador') return [] as TransferDoc[];
-    return transfersArr.filter(
-      (tr) => tr?.status === 'pending_payment' && tr?.paymentMethod === 'bank_transfer' && tr?.toUid === uid
-    );
-  }, [transfersArr, role, uid]);
+    return transfersArr.filter((tr) => {
+      if (!tr || tr.status !== 'pending_payment' || tr.paymentMethod !== 'bank_transfer' || tr.toUid !== uid) return false;
+      const buyer = room?.players?.[tr.toUid];
+      const seller = room?.players?.[tr.fromUid];
+      const prop = propsAll.find((item) => item.id === tr.propId);
+      if (!buyer || !seller || !prop) return false;
+      if (buyer.status === 'falido' || buyer.status === 'desistente') return false;
+      // Se o imóvel já saiu do vendedor, essa transferência antiga não é mais pendência.
+      return prop.ownerUid === tr.fromUid;
+    });
+  }, [transfersArr, role, uid, room, propsAll]);
+
+  const pendingCount = useMemo(() => {
+    const ids = new Set<string>();
+    pendingSales.forEach((item: any) => ids.add(`sale:${item.id}`));
+    pendingBankPropertyTransfers.forEach((item) => ids.add(`transfer:${item.id}`));
+    bankerPurchaseRequests.forEach((item) => ids.add(`request:${item.id}`));
+    myPendingPurchaseRequests.forEach((item) => ids.add(`request:${item.id}`));
+    return ids.size;
+  }, [pendingSales, pendingBankPropertyTransfers, bankerPurchaseRequests, myPendingPurchaseRequests]);
+
+  useEffect(() => {
+    if (role !== 'bancario') {
+      seenPurchaseRequestIdsRef.current = null;
+      return;
+    }
+    const ids = new Set(bankerPurchaseRequests.map((request) => request.id));
+    const previous = seenPurchaseRequestIdsRef.current;
+    if (previous === null) {
+      seenPurchaseRequestIdsRef.current = ids;
+      return;
+    }
+    const incoming = bankerPurchaseRequests.filter((request) => !previous.has(request.id));
+    if (incoming.length > 0) {
+      playBankSound('request');
+      setNotifUnread((count) => count + incoming.length);
+      setNotifs((current) => [
+        ...incoming.map((request): NotifItem => ({
+          id: `purchase-request-${request.id}`,
+          at: Number(request.at || Date.now()),
+          title: 'Nova solicitação de compra',
+          detail: `${request.buyerName} quer comprar ${request.propName} por ${money(request.price)}.`,
+          kind: 'info',
+        })),
+        ...current,
+      ].slice(0, 40));
+    }
+    seenPurchaseRequestIdsRef.current = ids;
+  }, [role, bankerPurchaseRequests]);
+
+  useEffect(() => {
+    if (role !== 'jogador') {
+      seenChargeIdsRef.current = null;
+      return;
+    }
+    const chargeItems = [
+      ...pendingSales.map((sale: any) => {
+        const installments = Math.max(1, Number(sale.installments || 1));
+        const paidArr: boolean[] = Array.isArray(sale.paidInstallments) ? sale.paidInstallments : Array(installments).fill(false);
+        const nextIdx = Math.max(0, paidArr.findIndex((value) => !value));
+        return {
+          id: `sale-${sale.id}`,
+          at: Number(sale.at || Date.now()),
+          title: 'Nova cobrança de propriedade',
+          detail: `${sale.propName} • ${money(saleInstallmentAmount(sale, nextIdx))}`,
+        };
+      }),
+      ...pendingBankPropertyTransfers.map((transfer) => ({
+        id: `transfer-${transfer.id}`,
+        at: Number(transfer.at || Date.now()),
+        title: 'Nova transferência para pagar',
+        detail: `${transfer.propName} • ${money(transfer.amount)}`,
+      })),
+    ];
+    const ids = new Set(chargeItems.map((item) => item.id));
+    const previous = seenChargeIdsRef.current;
+    if (previous === null) {
+      seenChargeIdsRef.current = ids;
+      return;
+    }
+    const incoming = chargeItems.filter((item) => !previous.has(item.id));
+    if (incoming.length > 0) {
+      playBankSound('request');
+      setNotifUnread((count) => count + incoming.length);
+      setNotifs((current) => [
+        ...incoming.map((item): NotifItem => ({
+          id: `charge-${item.id}`,
+          at: item.at,
+          title: item.title,
+          detail: item.detail,
+          kind: 'info',
+        })),
+        ...current,
+      ].slice(0, 40));
+    }
+    seenChargeIdsRef.current = ids;
+  }, [role, pendingSales, pendingBankPropertyTransfers]);
 
   function saleInstallmentAmount(sale: any, indexZeroBased: number) {
     const inst = Math.max(1, Number(sale?.installments || 1));
@@ -1572,9 +1797,10 @@ useEffect(() => {
       amount,
       fromName: me.name,
       toName: BANK_NAME,
+      method: 'bank_transfer',
     });
     setReceiptOpen(true);
-    playBeep('notif');
+    playBankSound('transfer');
   }
 
   async function payPropertyByBankTransfer(trLike: TransferDoc) {
@@ -1641,9 +1867,10 @@ useEffect(() => {
       amount,
       fromName: me.name,
       toName: trLike.fromName,
+      method: 'bank_transfer',
     });
     setReceiptOpen(true);
-    playBeep('notif');
+    playBankSound('transfer');
   }
 
   async function openNextInstallmentQr(sale: any) {
@@ -2094,8 +2321,10 @@ function openOnlineTransfer() {
         amount,
         fromName: payerName,
         toName: receiverName,
+        method: 'pix',
       });
       setReceiptOpen(true);
+      playBankSound('pix');
       setPayloadToPay(null);
       setConfirmOpen(false);
       setPayOpen(false);
@@ -2173,7 +2402,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
     }
 
     setFocus('pend');
-    playBeep('notif');
+    playBankSound('success');
     window.alert('Solicitação enviada ao Banco. Ela aparecerá nas Pendências do bancário.');
   }
 
@@ -2449,7 +2678,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
           if (sale && (sale.status === 'paid_full' || sale.status === 'transferred')) {
             setPendingTransferSale(sale);
             setPaidPopupOpen(true);
-            playBeep('notif');
+            playBankSound(sale.paymentMethod === 'bank_transfer' ? 'transfer' : sale.paymentMethod === 'pix' ? 'pix' : 'success');
           }
         });
       }
@@ -2465,6 +2694,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
           if (tr && tr.status === 'paid') {
             setPendingTransfer(tr);
             setTransferPaidPopupOpen(true);
+            playBankSound(tr.paymentMethod === 'bank_transfer' ? 'transfer' : 'success');
           }
         });
       }
@@ -3111,6 +3341,9 @@ function matchesQuery(p: PropertyItem, q: string) {
                   </div>
 
                   <div className="pendList">
+                    {pendingCount === 0 && (
+                      <div className="pendEmpty">Nenhuma pendência ativa nesta conta.</div>
+                    )}
                     {role === 'bancario' && bankerPurchaseRequests.map((req) => (
                       <div key={req.id} className="pendItem">
                         <div className="pendRow">
@@ -3332,9 +3565,7 @@ function matchesQuery(p: PropertyItem, q: string) {
               </span>
               <span>
                 Pendências
-                {(pendingSales.length + pendingBankPropertyTransfers.length + bankerPurchaseRequests.length + myPendingPurchaseRequests.length) > 0
-                  ? ` (${pendingSales.length + pendingBankPropertyTransfers.length + bankerPurchaseRequests.length + myPendingPurchaseRequests.length})`
-                  : ''}
+                {pendingCount > 0 ? ` (${pendingCount})` : ''}
               </span>
             </button>
 
@@ -3829,13 +4060,16 @@ function matchesQuery(p: PropertyItem, q: string) {
 
       <Modal
         open={receiptOpen}
-        title="Pix realizado"
+        title={lastReceipt?.method === 'bank_transfer' ? 'Transferência realizada' : lastReceipt?.method === 'cash' ? 'Pagamento em dinheiro' : 'Pix realizado'}
         onClose={() => setReceiptOpen(false)}
+        variant="fit"
       >
         {lastReceipt && (
           <div className="receipt">
             <div className="receiptOk">✓</div>
-            <div className="receiptTitle">Pagamento concluído</div>
+            <div className="receiptTitle">
+              {lastReceipt.method === 'bank_transfer' ? 'Transferência concluída' : lastReceipt.method === 'cash' ? 'Pagamento registrado' : 'Pix concluído'}
+            </div>
             <div className="receiptAmount">{money(lastReceipt.amount)}</div>
             <div className="sum">
               <div className="li2"><span>De</span><b>{lastReceipt.fromName}</b></div>
@@ -3931,7 +4165,7 @@ function matchesQuery(p: PropertyItem, q: string) {
     <div className="sum">
                 <div className="li2">
                   <span>Imóvel</span>
-                  <b style={{ color: prop.colorHex }}>{prop.name}</b>
+                  <b style={{ color: '#111' }}>{prop.name}</b>
                 </div>
                 <div className="li2">
                   <span>Hipoteca</span>
@@ -4238,7 +4472,7 @@ function matchesQuery(p: PropertyItem, q: string) {
               <div className="sum">
                 <div className="li2">
                   <span>Propriedade</span>
-                  <b style={{ color: prop.colorHex }}>{prop.name}</b>
+                  <b style={{ color: '#111' }}>{prop.name}</b>
                 </div>
                 <div className="li2">
                   <span>Tipo</span>
@@ -4401,7 +4635,7 @@ function matchesQuery(p: PropertyItem, q: string) {
               <div className="sum">
                 <div className="li2">
                   <span>Propriedade</span>
-                  <b style={{ color: prop.colorHex }}>{prop.name}</b>
+                  <b style={{ color: '#111' }}>{prop.name}</b>
                 </div>
                 <div className="li2">
                   <span>Valor fixo</span>
@@ -4783,6 +5017,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 
         .card {
           background: #fff;
+          color: #111;
           border-radius: 20px;
           padding: 16px;
           border: 1px solid rgba(11, 93, 74, .08);
@@ -5022,7 +5257,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 }
 .propViewBtn.active{
   background:#fff;
-  color:#0b5d4a;
+  color:#111;
   box-shadow:0 4px 14px rgba(0,0,0,.08);
 }
 .propViewBtn.active span{background:rgba(11,93,74,.12);}
@@ -5039,6 +5274,7 @@ function matchesQuery(p: PropertyItem, q: string) {
   border-radius:14px;
   border:1px solid rgba(0,0,0,.10);
   background:#fff;
+  color:#111;
   padding:0 12px;
   font-weight:900;
   outline:none;
@@ -5049,6 +5285,7 @@ function matchesQuery(p: PropertyItem, q: string) {
   border-radius:14px;
   border:1px solid rgba(0,0,0,.10);
   background:#fff;
+  color:#111;
   padding:0 12px;
   font-weight:900;
   outline:none;
@@ -5261,6 +5498,7 @@ function matchesQuery(p: PropertyItem, q: string) {
   gap:12px;
   line-height:1.1;
   background:#ffffff;
+  color:#111;
   border:1px solid rgba(0,0,0,.15);
   border-radius:14px;
   padding:10px 12px;
@@ -5537,6 +5775,7 @@ function matchesQuery(p: PropertyItem, q: string) {
   border-radius:14px;
   border:1px solid rgba(0,0,0,.18);
   background:#ffffff;
+  color:#111;
   padding:12px;
 }
 
@@ -5683,6 +5922,7 @@ function matchesQuery(p: PropertyItem, q: string) {
   border-radius: 14px;
   border: 1px solid rgba(0,0,0,.10);
   background: #fff;
+  color: #111;
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -5727,19 +5967,20 @@ function matchesQuery(p: PropertyItem, q: string) {
         .pHouseItem span{opacity:.85;font-weight:900}
         .pHouseItem b{font-size:13px}
 
-        .pendBox{margin-top:14px;padding-top:10px;border-top:1px solid rgba(0,0,0,.08)}
-        .pendTitle{font-weight:1000;margin-bottom:4px}
-        .pendHint{font-size:12px;opacity:.75;margin-bottom:10px}
-        .pendList{display:grid;gap:10px}
-        .pendItem{border:1px solid rgba(0,0,0,.10);border-radius:14px;padding:10px;background:#fff}
+        .pendBox{margin-top:14px;padding:12px;border:1px solid rgba(0,0,0,.08);border-radius:16px;background:#f4f7f6;color:#111;max-width:620px;box-sizing:border-box}
+        .pendTitle{font-weight:1000;margin-bottom:4px;color:#111}
+        .pendHint{font-size:12px;opacity:.75;margin-bottom:10px;color:#333}
+        .pendList{display:grid;gap:10px;max-height:min(46dvh,430px);overflow:auto;padding-right:2px;-webkit-overflow-scrolling:touch}
+        .pendItem{border:1px solid rgba(0,0,0,.10);border-radius:14px;padding:10px;background:#fff;color:#111;box-shadow:0 5px 14px rgba(0,0,0,.04)}
+        .pendEmpty{padding:14px;border-radius:14px;background:#fff;color:#111;font-size:13px;font-weight:800;text-align:center}
         .pendRow{display:flex;align-items:center;justify-content:space-between;gap:10px}
         .pendMain{min-width:0}
-        .pendName{font-weight:1000;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .pendSub{font-size:12px;opacity:.8}
+        .pendName{font-weight:1000;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#111}
+        .pendSub{font-size:12px;opacity:.8;color:#222}
         .miniBtn{height:34px;border-radius:12px;border:0;background:#7a2cff;color:#fff;font-weight:1000;padding:0 12px;cursor:pointer;white-space:nowrap}
         .pendBar{height:8px;border-radius:999px;background:rgba(0,0,0,.08);overflow:hidden;margin-top:8px}
         .pendBarFill{height:100%;background:#7a2cff}
-        .pendNext{margin-top:6px;font-size:12px;opacity:.85}
+        .pendNext{margin-top:6px;font-size:12px;opacity:.85;color:#222}
         .pendNext.ok{opacity:1;font-weight:900}
         .instPreview{margin-top:8px;font-size:13px;opacity:.85}
         .pendDots{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
