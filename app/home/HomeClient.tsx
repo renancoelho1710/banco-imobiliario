@@ -332,16 +332,17 @@ function getBankAudioOutput(ctx: any) {
   try {
     if (!bankCompressor) {
       bankCompressor = ctx.createDynamicsCompressor();
-      bankCompressor.threshold.setValueAtTime(-18, ctx.currentTime);
-      bankCompressor.knee.setValueAtTime(18, ctx.currentTime);
-      bankCompressor.ratio.setValueAtTime(4, ctx.currentTime);
-      bankCompressor.attack.setValueAtTime(0.002, ctx.currentTime);
-      bankCompressor.release.setValueAtTime(0.12, ctx.currentTime);
+      bankCompressor.threshold.setValueAtTime(-28, ctx.currentTime);
+      bankCompressor.knee.setValueAtTime(8, ctx.currentTime);
+      bankCompressor.ratio.setValueAtTime(12, ctx.currentTime);
+      bankCompressor.attack.setValueAtTime(0.001, ctx.currentTime);
+      bankCompressor.release.setValueAtTime(0.18, ctx.currentTime);
     }
     if (!bankMasterGain) {
       bankMasterGain = ctx.createGain();
-      // Ganho interno 8x (800%). O compressor segura picos; o limite físico ainda é o volume máximo do celular.
-      bankMasterGain.gain.setValueAtTime(8.0, ctx.currentTime);
+      // Ganho interno extremo (16x) para maximizar o volume percebido.
+      // O compressor evita picos digitais absurdos; o limite físico continua sendo o volume do aparelho.
+      bankMasterGain.gain.setValueAtTime(16.0, ctx.currentTime);
       bankMasterGain.connect(bankCompressor);
       bankCompressor.connect(ctx.destination);
     }
@@ -410,19 +411,20 @@ async function playBankSound(kind: BankSound = 'success') {
     };
 
     const peakGain: Record<BankSound, number> = {
-      pix: 0.34,
-      transfer: 0.38,
-      request: 0.95,
-      success: 0.30,
-      warn: 0.42,
+      // Níveis altos de propósito: o master + compressor levam os alertas perto do teto digital.
+      pix: 0.72,
+      transfer: 0.78,
+      request: 1.00,
+      success: 0.64,
+      warn: 0.82,
     };
 
     const baseTime = ctx.currentTime + 0.025;
     patterns[kind].forEach(([frequency, delay, duration]) => {
-      // Duas camadas por nota dão mais presença em alto-falante pequeno de celular.
+      // Camadas harmônicas por nota dão mais presença em alto-falante pequeno de celular.
       const voices = kind === 'request'
-        ? [[frequency, 1], [frequency * 2, 0.28]]
-        : [[frequency, 1], [frequency * 1.5, 0.16]];
+        ? [[frequency, 1], [frequency * 1.5, 0.46], [frequency * 2, 0.32]]
+        : [[frequency, 1], [frequency * 1.5, 0.30], [frequency * 2, 0.16]];
 
       voices.forEach(([voiceFrequency, strength]) => {
         const oscillator = ctx.createOscillator();
@@ -444,8 +446,10 @@ async function playBankSound(kind: BankSound = 'success') {
     });
 
     // Reforço tátil para solicitações/cobranças. Não substitui o som.
-    if (kind === 'request' && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-      navigator.vibrate([180, 80, 180, 80, 260]);
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      if (kind === 'request') navigator.vibrate([220, 70, 220, 70, 320]);
+      else if (kind === 'pix' || kind === 'transfer') navigator.vibrate([90, 45, 150]);
+      else if (kind === 'success') navigator.vibrate(90);
     }
   } catch {}
 }
@@ -939,7 +943,7 @@ const COLOR_HEX: Record<string, string> = {
   verde: '#22c55e',
   vermelho: '#ef4444',
   amarelo: '#eab308',
-  roxo: '#0a4db8',
+  roxo: '#0b5d4a',
   'azul escuro': '#1e3a8a',
 };
 
