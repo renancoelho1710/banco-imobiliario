@@ -522,19 +522,21 @@ function Modal({
           position: fixed;
           inset: 0;
           z-index: 99999;
-          background: rgba(0, 0, 0, 0.45);
+          background: rgba(2, 18, 48, 0.52);
+          backdrop-filter: blur(10px);
           display: flex;
           align-items: center;
           justify-content: center;
           padding: 18px;
         }
 .mCard{
-  width: min(620px, 100%);
-  background: rgba(255,255,255,.96);
+  width: min(480px, 100%);
+  background: rgba(255,255,255,.985);
   backdrop-filter: blur(14px);
-  border-radius: 22px;
-  padding: 12px;
-  box-shadow: 0 24px 70px rgba(0,0,0,.35);
+  border-radius: 24px;
+  padding: 14px;
+  border: 1px solid rgba(20,55,105,.10);
+  box-shadow: 0 28px 80px rgba(4,26,65,.26);
   display: grid;
   grid-template-rows: auto minmax(0, auto);
   gap: 10px;
@@ -637,13 +639,290 @@ function Modal({
   background: rgba(0, 0, 0, 0.08);
   cursor: pointer;
   font-size: 16px;
-  color: #0b5d4a;
+  color: #0a4db8;
   font-weight: 1000;
 }
 .mX:hover{
-  background: rgba(11, 93, 74, 0.14);
+  background: rgba(10, 77, 184, 0.12);
 }
-       `}</style>
+ 
+
+        /* =====================================================
+           BLUE BANK — PREMIUM FINANCIAL UI
+           ===================================================== */
+        .wrap {
+          min-height: 100dvh;
+          background:
+            radial-gradient(circle at 8% 0%, rgba(48,128,237,.10), transparent 25%),
+            linear-gradient(180deg, #edf4ff 0, #f7f9fc 290px, #f4f7fb 100%);
+          color: #0b1220;
+          font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+        }
+        .header {
+          position: relative;
+          overflow: hidden;
+          background:
+            radial-gradient(circle at 84% -20%, rgba(103,164,255,.55), transparent 36%),
+            linear-gradient(145deg, #031a3d 0%, #05285d 48%, #0a4db8 100%);
+          padding: max(18px, env(safe-area-inset-top)) 18px 28px;
+          border-radius: 0 0 30px 30px;
+          box-shadow: 0 18px 48px rgba(4,42,98,.20);
+        }
+        .header::after {
+          content: "";
+          position: absolute;
+          width: 230px;
+          height: 230px;
+          right: -90px;
+          bottom: -150px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,.15);
+          box-shadow: 0 0 0 28px rgba(255,255,255,.035), 0 0 0 58px rgba(255,255,255,.025);
+          pointer-events: none;
+        }
+        .hTop, .hello, .sub, .gameOnly { position: relative; z-index: 1; }
+        .avatarLogo {
+          width: 44px;
+          height: 44px;
+          border-radius: 15px;
+          background: rgba(255,255,255,.14);
+          border: 1px solid rgba(255,255,255,.28);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
+        }
+        .iconsRow { gap: 8px; }
+        .iconBtn {
+          min-height: 38px;
+          padding: 8px 13px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,.20);
+          background: rgba(255,255,255,.10);
+          backdrop-filter: blur(12px);
+          color: #fff;
+          font-weight: 760;
+          transition: .16s ease;
+        }
+        .iconBtn:hover { background: rgba(255,255,255,.18); transform: translateY(-1px); }
+        .dangerBtn { background: rgba(255,255,255,.08) !important; border-color: rgba(255,180,180,.32) !important; color: #ffe7e7 !important; }
+        .hello {
+          margin-top: 22px;
+          font-size: clamp(22px, 4.8vw, 30px);
+          line-height: 1.05;
+          letter-spacing: -.8px;
+          font-weight: 820;
+        }
+        .sub { color: rgba(255,255,255,.76); font-size: 12px; font-weight: 570; }
+        .gameOnly {
+          margin-top: 12px;
+          background: rgba(255,255,255,.10);
+          border: 1px solid rgba(255,255,255,.16);
+          color: rgba(255,255,255,.82);
+          font-size: 9px;
+          letter-spacing: 1.2px;
+          padding: 6px 9px;
+        }
+        .page {
+          padding: 16px 14px 34px;
+          max-width: 1040px;
+          gap: 14px;
+        }
+        .card {
+          border-radius: 22px;
+          padding: 17px;
+          background: rgba(255,255,255,.96);
+          border: 1px solid #e1e8f2;
+          box-shadow: 0 10px 28px rgba(13,45,88,.06), 0 1px 2px rgba(13,45,88,.04);
+          color: #0b1220;
+        }
+        #conta.card {
+          position: relative;
+          overflow: hidden;
+          background:
+            radial-gradient(circle at 92% 0%, rgba(115,174,255,.50), transparent 32%),
+            linear-gradient(140deg, #05285d 0%, #073b8c 52%, #0a4db8 100%);
+          border: 1px solid rgba(255,255,255,.18);
+          box-shadow: 0 22px 55px rgba(4,55,128,.22);
+          color: #fff;
+          padding: 20px;
+        }
+        #conta.card::after {
+          content: "BI PAY";
+          position: absolute;
+          right: 20px;
+          top: 18px;
+          font-size: 10px;
+          letter-spacing: 1.6px;
+          font-weight: 850;
+          color: rgba(255,255,255,.50);
+        }
+        #conta .label { color: rgba(255,255,255,.72); font-size: 11px; letter-spacing: .8px; text-transform: uppercase; }
+        #conta .balance { color: #fff; font-size: clamp(28px, 6vw, 38px); letter-spacing: -1.5px; font-weight: 780; margin-top: 7px; }
+        #conta .chev { color: rgba(255,255,255,.55); }
+        #conta .chevBtn:hover { background: rgba(255,255,255,.10); }
+        .eyeBtn { color: #fff !important; background: rgba(255,255,255,.10) !important; border-radius: 10px !important; }
+        #conta .actions {
+          margin-top: 18px;
+          padding-top: 16px;
+          border-top: 1px solid rgba(255,255,255,.14);
+          grid-template-columns: repeat(6, minmax(0,1fr));
+          gap: 9px;
+        }
+        #conta .act {
+          min-height: 82px;
+          border-radius: 16px;
+          background: rgba(255,255,255,.105);
+          border: 1px solid rgba(255,255,255,.14);
+          color: #fff;
+          padding: 10px 7px;
+          font-size: 10px;
+          font-weight: 710;
+          backdrop-filter: blur(10px);
+          transition: transform .15s ease, background .15s ease, border-color .15s ease;
+        }
+        #conta .act:hover { transform: translateY(-2px); background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.24); }
+        #conta .act:active { transform: scale(.98); }
+        #conta .ico {
+          width: 38px;
+          height: 38px;
+          background: rgba(255,255,255,.92);
+          color: #073b8c;
+          border: 0;
+          box-shadow: 0 7px 16px rgba(2,20,55,.16);
+        }
+        #conta .pendBox {
+          margin-top: 16px;
+          background: #fff;
+          color: #0b1220;
+          border: 0;
+          border-radius: 18px;
+          box-shadow: 0 12px 26px rgba(3,26,61,.16);
+        }
+        #conta .pendBox * { color: inherit; }
+        #conta .pendBox .miniBtn { color: #fff; }
+        #conta .pendBox .dangerMini { color: #b42318; }
+        .sectionTitle, .label { color: #0b1220; font-weight: 800; letter-spacing: -.15px; }
+        .hint, .hintSmall, .adminMeta, .muted { color: #66758c; }
+        .actions { gap: 10px; }
+        .act {
+          border: 1px solid #e1e8f2;
+          background: #f7f9fc;
+          color: #163052;
+          border-radius: 16px;
+          min-height: 84px;
+          transition: .16s ease;
+        }
+        .act:hover { background: #edf4ff; border-color: #c7dcf8; transform: translateY(-1px); }
+        .ico { background: #e7f1ff; color: #0a4db8; border-color: #cfe2ff; }
+        .adminRow, .pendItem, .li2, .sum, .bankPayCard, .compactPayCard {
+          background: #f7f9fc;
+          border: 1px solid #e2e9f3;
+        }
+        .adminRow { border-radius: 17px; }
+        .adminName, .pendName { color: #10223d; }
+        .pillBtn, .miniBtn, .btn.primary, .rowBtn.primary {
+          background: linear-gradient(180deg, #1468df, #0a4db8);
+          color: #fff;
+          border: 0;
+          box-shadow: 0 6px 15px rgba(10,77,184,.16);
+        }
+        .pillBtn.ghost, .miniBtn.ghost, .btn:not(.primary), .rowBtn:not(.primary) {
+          background: #edf4ff;
+          color: #073b8c;
+          border: 1px solid #d5e6fb;
+          box-shadow: none;
+        }
+        .danger, .dangerBtn, .dangerMini, .pillBtn.danger {
+          background: #fff0ef !important;
+          color: #b42318 !important;
+          border: 1px solid #ffd3cf !important;
+          box-shadow: none !important;
+        }
+        .btn, .miniBtn, .pillBtn, .rowBtn {
+          border-radius: 12px;
+          min-height: 38px;
+          font-weight: 760;
+          transition: transform .14s ease, filter .14s ease, background .14s ease;
+        }
+        .btn:active, .miniBtn:active, .pillBtn:active, .rowBtn:active { transform: scale(.985); }
+        .linkBtn { color: #0a4db8; }
+        .linkBtn:hover { background: #edf4ff; }
+        .propViewTabs { background: #edf2f8; border: 1px solid #e1e8f2; }
+        .propViewBtn { color: #52637c; }
+        .propViewBtn.active { color: #073b8c; box-shadow: 0 4px 12px rgba(10,42,89,.08); }
+        .propViewBtn.active span { background: #e4efff; color: #0a4db8; }
+        .propSearch, .propSelect, .inp, .ta, select.inp, .pixInput {
+          border: 1px solid #dbe4f0;
+          background: #f9fbfe;
+          color: #0b1220;
+          border-radius: 13px;
+          outline: none;
+          transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+        }
+        .propSearch:focus, .propSelect:focus, .inp:focus, .ta:focus, .pixInput:focus {
+          border-color: #2f80ed;
+          background: #fff;
+          box-shadow: 0 0 0 4px rgba(47,128,237,.10);
+        }
+        .pMiniCard, .pBackCard {
+          border-radius: 18px;
+          border: 1px solid #dfe7f1;
+          box-shadow: 0 8px 22px rgba(13,45,88,.06);
+          overflow: hidden;
+          background: #fff;
+        }
+        .pOwner, .pBackOwner { color: #5f6f85; }
+        .pendBox { border: 1px solid #dfe7f1; border-radius: 18px; background: #fff; }
+        .pendItem { border-radius: 14px; padding: 11px; }
+        .pendBar { background: #e8eef6; }
+        .pendBarFill { background: linear-gradient(90deg, #2f80ed, #0a4db8); }
+        .empty, .pendEmpty {
+          background: #f7f9fc;
+          border: 1px dashed #d6e0ec;
+          color: #65758a;
+          border-radius: 15px;
+        }
+        .receiptOk { background: #e8f2ff; color: #0a4db8; }
+        .receiptTitle { color: #17345f; }
+        .receiptAmount { color: #07152c; }
+        .qrBox, .compactQrBox, .sellQrBox {
+          background: #fff;
+          border: 1px solid #dfe7f1;
+          border-radius: 18px;
+          box-shadow: 0 8px 24px rgba(13,45,88,.06);
+        }
+        .qrImg, .sellQrImg { border-radius: 14px; background: #fff; padding: 8px; }
+        .copyRow { gap: 8px; }
+        .copyIconBtn { background: #edf4ff; color: #073b8c; border: 1px solid #d4e5fb; }
+        .blocked { border-radius: 13px; }
+        .badge { background: #fff; color: #0a4db8; border: 2px solid #073b8c; }
+
+        @media (max-width: 820px) {
+          #conta .actions { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 560px) {
+          .header { padding-left: 15px; padding-right: 15px; border-radius: 0 0 25px 25px; }
+          .page { padding: 13px 11px 30px; }
+          .card { border-radius: 19px; padding: 14px; }
+          #conta.card { padding: 17px 14px; }
+          #conta .actions { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; }
+          #conta .act { min-height: 76px; padding: 9px 4px; font-size: 9.5px; }
+          .adminRow { align-items: flex-start; }
+          .adminBtns { justify-content: flex-start; margin-top: 7px; }
+        }
+
+/* Premium compact banking dialogs */
+.mOverlay { background: rgba(3,18,42,.58) !important; backdrop-filter: blur(10px) saturate(115%); padding: 14px !important; }
+.mCard { width: min(500px, 100%) !important; max-height: min(720px, calc(100dvh - 28px)) !important; border-radius: 24px !important; padding: 14px !important; background: #fff !important; border: 1px solid rgba(255,255,255,.82); box-shadow: 0 28px 80px rgba(2,25,61,.28) !important; color: #0b1220 !important; }
+.mCard.mCompact { width: min(420px, 100%) !important; max-height: min(540px, calc(100dvh - 28px)) !important; }
+.mCard.mFit { width: min(450px, 100%) !important; max-height: min(620px, calc(100dvh - 28px)) !important; }
+.mHead { min-height: 44px; background: #fff !important; border-bottom: 1px solid #edf1f6; padding: 2px 2px 10px !important; }
+.mTitle { color: #0b1d38 !important; font-size: 16px; letter-spacing: -.2px; font-weight: 800 !important; }
+.mX { width: 36px !important; height: 36px !important; border-radius: 12px !important; background: #f0f4f9 !important; color: #24405f !important; }
+.mX:hover { background: #e5eef9 !important; color: #073b8c !important; }
+.mBody { color: #0b1220 !important; max-height: calc(100dvh - 105px) !important; padding: 1px; }
+.mCard input, .mCard textarea, .mCard select { color: #0b1220 !important; background: #f9fbfe !important; }
+.mCard input::placeholder, .mCard textarea::placeholder { color: #8996a9 !important; }
+.mCard .btn.primary, .mCard .miniBtn:not(.dangerMini), .mCard .pillBtn:not(.danger) { color: #fff !important; }
+      `}</style>
     </div>
   );
 
@@ -660,7 +939,7 @@ const COLOR_HEX: Record<string, string> = {
   verde: '#22c55e',
   vermelho: '#ef4444',
   amarelo: '#eab308',
-  roxo: '#0b5d4a',
+  roxo: '#0a4db8',
   'azul escuro': '#1e3a8a',
 };
 
@@ -3982,7 +4261,7 @@ async function finalizeGameNow() {
               cy="50"
               r="38"
               fill="none"
-              stroke="rgba(11, 93, 74, 0.2)"
+              stroke="rgba(10, 77, 184, 0.2)"
               strokeWidth="8"
             />
             <circle
@@ -3990,7 +4269,7 @@ async function finalizeGameNow() {
               cy="50"
               r="38"
               fill="none"
-              stroke="rgba(11, 93, 74, 1)"
+              stroke="rgba(10, 77, 184, 1)"
               strokeWidth="8"
               strokeLinecap="round"
               strokeDasharray="60 200"
@@ -5855,12 +6134,12 @@ function matchesQuery(p: PropertyItem, q: string) {
       <style jsx>{`
         .wrap {
           min-height: 100vh;
-          background: #eef3f1;
+          background: #f3f6fb;
           font-family: system-ui;
         }
 
         .header {
-          background: linear-gradient(160deg, #0b5d4a 0%, #08483b 55%, #052f28 100%);
+          background: linear-gradient(160deg, #0a4db8 0%, #073b8c 55%, #031a3d 100%);
           color: #fff;
           padding: 18px 18px 22px;
           border-bottom-left-radius: 22px;
@@ -5969,20 +6248,20 @@ function matchesQuery(p: PropertyItem, q: string) {
           display: grid;
           place-items: center;
           margin: 0 auto;
-          background: #e7f7f1;
-          color: #0b5d4a;
+          background: #eaf2ff;
+          color: #0a4db8;
           font-size: 30px;
           font-weight: 1000;
         }
         .receiptTitle {
           font-size: 15px;
           font-weight: 1000;
-          color: #17322c;
+          color: #17345f;
         }
         .receiptAmount {
           font-size: 28px;
           font-weight: 1100;
-          color: #071f1a;
+          color: #07152c;
         }
         .receiptId {
           max-width: 180px;
@@ -6004,7 +6283,7 @@ function matchesQuery(p: PropertyItem, q: string) {
           color: #111;
           border-radius: 20px;
           padding: 16px;
-          border: 1px solid rgba(11, 93, 74, .08);
+          border: 1px solid rgba(10, 77, 184, .08);
           box-shadow: 0 12px 34px rgba(6, 47, 40, 0.07);
           display: grid;
           gap: 12px;
@@ -6106,9 +6385,9 @@ function matchesQuery(p: PropertyItem, q: string) {
           border-radius: 999px;
           display: grid;
           place-items: center;
-          background: rgba(11, 93, 74, 0.14);
-          color: #08483b;
-          border: 1px solid rgba(11, 93, 74, 0.16);
+          background: rgba(10, 77, 184, 0.12);
+          color: #073b8c;
+          border: 1px solid rgba(10, 77, 184, 0.16);
         }
 
         .adminList {
@@ -6158,7 +6437,7 @@ function matchesQuery(p: PropertyItem, q: string) {
         }
         .pillBtn {
           border: none;
-          background: #0b5d4a;
+          background: #0a4db8;
           color: #fff;
           font-weight: 1000;
           padding: 10px 12px;
@@ -6167,9 +6446,9 @@ function matchesQuery(p: PropertyItem, q: string) {
           font-size: 12px;
         }
         .pillBtn.ghost {
-          background: rgba(11, 93, 74, 0.12);
-          color: #08483b;
-          border: 1px solid rgba(11, 93, 74, 0.18);
+          background: rgba(10, 77, 184, 0.12);
+          color: #073b8c;
+          border: 1px solid rgba(10, 77, 184, 0.18);
         }
         .pillBtn.danger {
           background: rgba(239, 68, 68, 0.12);
@@ -6188,13 +6467,13 @@ function matchesQuery(p: PropertyItem, q: string) {
           background: transparent;
           cursor: pointer;
           font-weight: 1000;
-          color: #08483b;
+          color: #073b8c;
           font-size: 12px;
           padding: 6px 10px;
           border-radius: 12px;
         }
         .linkBtn:hover {
-          background: rgba(11, 93, 74, 0.08);
+          background: rgba(10, 77, 184, 0.08);
         }
 
         .propGrid {
@@ -6391,7 +6670,7 @@ function matchesQuery(p: PropertyItem, q: string) {
   width:45%;
   border:0;
   border-radius:999px;
-  background:#7a2cff;
+  background:#0a5cff;
   color:#fff;
   font-weight:1100;
   cursor:pointer;
@@ -6400,7 +6679,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 }
 .pBtn.ghost{
   background:rgba(138,5,190,.12);
-  color:#08483b;
+  color:#073b8c;
   border:1px solid rgba(138,5,190,.22);
   box-shadow:none;
 }
@@ -6414,7 +6693,7 @@ function matchesQuery(p: PropertyItem, q: string) {
           height:46px;
           border:0;
           border-radius:999px;
-          background:#7a2cff;
+          background:#0a5cff;
           color:#fff;
           font-weight:1100;
           cursor:pointer;
@@ -6595,7 +6874,7 @@ function matchesQuery(p: PropertyItem, q: string) {
           color: #222;
         }
         .btn.primary {
-          background: #0b5d4a;
+          background: #0a4db8;
           color: #fff;
           border: none;
         }
@@ -6716,9 +6995,9 @@ function matchesQuery(p: PropertyItem, q: string) {
           color: #444;
         }
         .segBtn.active {
-          background: #0b5d4a;
+          background: #0a4db8;
           color: #fff;
-          border-color: #0b5d4a;
+          border-color: #0a4db8;
         }
 
         .gridRent {
@@ -6760,7 +7039,7 @@ function matchesQuery(p: PropertyItem, q: string) {
           padding: 6px 9px;
           border-radius: 999px;
           background: #e4efeb;
-          color: #08483b;
+          color: #073b8c;
           font-size: 11px;
           font-weight: 1000;
         }
@@ -6852,7 +7131,7 @@ function matchesQuery(p: PropertyItem, q: string) {
         }
         .diceTotal b {
           font-size: 16px;
-          color: #0b5d4a;
+          color: #0a4db8;
         }
         .compactActions {
           gap: 8px;
@@ -7125,9 +7404,9 @@ function matchesQuery(p: PropertyItem, q: string) {
         .pendMain{min-width:0}
         .pendName{font-weight:1000;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#111}
         .pendSub{font-size:12px;opacity:.8;color:#222}
-        .miniBtn{height:34px;border-radius:12px;border:0;background:#7a2cff;color:#fff;font-weight:1000;padding:0 12px;cursor:pointer;white-space:nowrap}
+        .miniBtn{height:34px;border-radius:12px;border:0;background:#0a5cff;color:#fff;font-weight:1000;padding:0 12px;cursor:pointer;white-space:nowrap}
         .pendBar{height:8px;border-radius:999px;background:rgba(0,0,0,.08);overflow:hidden;margin-top:8px}
-        .pendBarFill{height:100%;background:#7a2cff}
+        .pendBarFill{height:100%;background:#0a5cff}
         .pendNext{margin-top:6px;font-size:12px;opacity:.85;color:#222}
         .pendNext.ok{opacity:1;font-weight:900}
         .instPreview{margin-top:8px;font-size:13px;opacity:.85}
@@ -7146,6 +7425,87 @@ function matchesQuery(p: PropertyItem, q: string) {
           .purchaseRequestItem .miniBtn{height:29px;padding:0 8px}
         }
       
+
+/* ===== BANCO BLUE — DESIGN SYSTEM PREMIUM ===== */
+.wrap{
+  min-height:100dvh!important;
+  background:
+    radial-gradient(circle at 92% 0%, rgba(48,124,255,.13), transparent 28%),
+    linear-gradient(180deg,#eef4ff 0,#f7f9fc 260px,#f4f7fb 100%)!important;
+  color:#0b1220;
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",Inter,system-ui,sans-serif!important;
+}
+.header{
+  position:relative;
+  overflow:hidden;
+  background:linear-gradient(135deg,#051a3d 0%,#082d69 48%,#0a5cff 125%)!important;
+  color:#fff!important;
+  padding:22px max(18px,calc((100vw - 980px)/2 + 18px)) 34px!important;
+  border-radius:0 0 34px 34px!important;
+  box-shadow:0 18px 46px rgba(5,37,92,.18)!important;
+}
+.header:after{
+  content:"";position:absolute;width:280px;height:280px;border-radius:50%;right:-90px;top:-155px;
+  border:1px solid rgba(255,255,255,.14);box-shadow:0 0 0 50px rgba(255,255,255,.025),0 0 0 100px rgba(255,255,255,.018);pointer-events:none;
+}
+.hTop,.hello,.sub,.gameOnly{position:relative;z-index:1}
+.avatarLogo{width:44px!important;height:44px!important;border-radius:15px!important;background:rgba(255,255,255,.13)!important;border:1px solid rgba(255,255,255,.18)!important;box-shadow:inset 0 1px rgba(255,255,255,.16)}
+.iconBtn{min-height:38px!important;border-radius:12px!important;background:rgba(255,255,255,.10)!important;border:1px solid rgba(255,255,255,.16)!important;padding:0 12px!important;backdrop-filter:blur(8px);transition:.18s ease}
+.iconBtn:hover{background:rgba(255,255,255,.17)!important;transform:translateY(-1px)}
+.dangerBtn{background:rgba(255,255,255,.09)!important;border-color:rgba(255,255,255,.16)!important;color:#fff!important;opacity:.88}
+.hello{margin-top:22px!important;font-size:24px!important;letter-spacing:-.6px;font-weight:800!important}
+.sub{margin-top:5px!important;font-size:12px!important;color:rgba(255,255,255,.74)!important;opacity:1!important}
+.gameOnly{margin-top:12px!important;font-size:9px!important;letter-spacing:1.05px!important;padding:5px 9px!important;background:rgba(255,255,255,.09)!important;border-color:rgba(255,255,255,.12)!important;color:rgba(255,255,255,.78)!important}
+.page{padding:18px 14px 34px!important;max-width:980px!important;gap:14px!important}
+.card{
+  background:rgba(255,255,255,.96)!important;color:#0b1220!important;border-radius:24px!important;padding:18px!important;
+  border:1px solid #e5ebf4!important;box-shadow:0 10px 30px rgba(23,48,87,.055)!important;gap:14px!important;
+}
+#conta.card{margin-top:-34px;position:relative;z-index:4;border-color:rgba(255,255,255,.8)!important;box-shadow:0 18px 52px rgba(11,45,100,.13)!important}
+.label{color:#667085!important;font-size:12px!important;font-weight:750!important;letter-spacing:.15px;text-transform:none}
+.balance{font-size:34px!important;line-height:1.08!important;letter-spacing:-1.2px!important;color:#071b3a!important;font-weight:800!important;margin-top:7px!important}
+.balRow{align-items:center!important;gap:10px!important}
+.eyeBtn{background:#edf4ff!important;color:#0a5cff!important;border:0!important;border-radius:12px!important;width:38px!important;height:38px!important}
+.hint,.hintSmall{color:#7b8798!important}
+.chevBtn{width:38px!important;height:38px!important;display:grid!important;place-items:center!important;padding:0!important;background:#f4f7fb!important;border-radius:12px!important;transition:.18s ease}
+.chevBtn:hover{background:#eaf2ff!important}.chev{color:#0a5cff!important;font-size:24px!important}
+.actions{grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:9px!important;border-top:1px solid #edf1f6;padding-top:15px}
+.act{min-height:92px!important;border:1px solid #e8edf5!important;background:#f8faff!important;border-radius:17px!important;padding:11px 7px!important;color:#344054!important;font-size:11px!important;font-weight:750!important;transition:.18s ease;align-content:center}
+.act:hover:not(.disabled){background:#f1f6ff!important;border-color:#d6e4ff!important;transform:translateY(-2px);box-shadow:0 8px 18px rgba(10,92,255,.08)}
+.act:active:not(.disabled){transform:scale(.98)}
+.ico{width:42px!important;height:42px!important;background:linear-gradient(145deg,#eaf2ff,#dceaff)!important;color:#0a5cff!important;border:1px solid #d7e6ff!important;box-shadow:inset 0 1px #fff}
+.sectionTitle{font-size:14px!important;color:#101828!important;font-weight:800!important}
+.linkBtn{color:#0a5cff!important;border-radius:10px!important}.linkBtn:hover{background:#edf4ff!important}
+.adminRow{background:#f8faff!important;border:1px solid #e9eef6!important;border-radius:17px!important;padding:13px!important}
+.adminName{color:#101828!important;font-weight:800!important}.adminMeta{color:#7b8798!important}
+.pillBtn{background:#0a5cff!important;border-radius:12px!important;font-weight:800!important;box-shadow:0 6px 14px rgba(10,92,255,.14)}
+.pillBtn.ghost{background:#edf4ff!important;color:#0a5cff!important;border:1px solid #d8e6ff!important;box-shadow:none}.pillBtn.danger{background:#fff1f1!important;color:#b42318!important;border-color:#ffd4d1!important;box-shadow:none}
+.propViewTabs{background:#eff3f8!important;border-radius:15px!important;padding:4px!important}.propViewBtn{border-radius:11px!important;color:#667085!important}.propViewBtn.active{color:#0a5cff!important;box-shadow:0 3px 10px rgba(21,55,108,.08)!important}.propViewBtn.active span{background:#e7f0ff!important;color:#0a5cff!important}
+.propSearch,.propSelect{background:#f9fbfd!important;border-color:#dfe6ef!important;border-radius:13px!important;color:#101828!important;font-weight:650!important}.propSearch:focus,.propSelect:focus{border-color:#0a5cff!important;box-shadow:0 0 0 3px rgba(10,92,255,.09)!important;outline:none}.propClear{background:#eef4ff!important;color:#0a5cff!important;border-color:#dce8ff!important;border-radius:13px!important}
+/* propriedades: de pôster para ativo financeiro */
+.pMiniCard{min-height:0!important;background:#fff!important;border:1px solid #e3e9f2!important;border-radius:19px!important;box-shadow:0 8px 22px rgba(19,49,92,.06)!important;overflow:hidden!important}
+.pMiniTop{padding:16px 16px 10px!important;font-size:18px!important;text-align:left!important;letter-spacing:-.25px!important;color:#101828!important;background:#fff!important}
+.ribbon{position:static!important;margin:12px 14px 0!important;height:30px!important;width:fit-content!important;max-width:calc(100% - 28px)!important;border-radius:9px!important;box-shadow:none!important;padding:0 10px!important;justify-content:flex-start!important}.ribbon.ok{background:#e9f8ef!important;color:#18794e!important}.ribbon.bad{background:#fff0f0!important;color:#b42318!important}.ribbonText{font-size:10px!important}
+.pBand{margin:0!important;padding:10px 16px 14px!important;box-shadow:none!important;background:transparent!important}.pBandName{font-size:12px!important;text-align:left!important;color:#667085!important}.pBandRow{color:#0a5cff!important;font-size:13px!important}
+.pOwner{padding:10px 16px!important;font-size:11px!important;color:#667085!important;border-top:1px solid #eef2f6!important}
+.pBtnsOut{padding:0 14px 14px!important;gap:8px!important}.pBtn{height:40px!important;min-width:0!important;max-width:none!important;width:100%!important;border-radius:12px!important;background:#0a5cff!important;font-size:11px!important;font-weight:800!important;box-shadow:0 7px 14px rgba(10,92,255,.14)!important}.pBtn.ghost{background:#edf4ff!important;color:#0a5cff!important;border:1px solid #d9e7ff!important;box-shadow:none!important}
+.pBackCard{min-height:0!important;background:#fff!important;border:1px solid #e4eaf2!important;border-radius:18px!important;box-shadow:none!important}.pBackTop{padding:13px 14px!important}.pBackName{font-size:17px!important}.pBackBody{padding:10px!important;gap:7px!important}.rentLine{padding:9px 10px!important;border-radius:11px!important;border-color:#e7ebf1!important;background:#f9fafc!important}.housesCard{border-radius:13px!important}
+.ledger{gap:7px!important}.lRow{background:#f9fbfd!important;border:1px solid #edf1f5!important;border-radius:15px!important;padding:11px 12px!important}.lTitle{font-weight:750!important;color:#101828!important}.lSub{color:#8a94a4!important}.lAmt{font-weight:800!important}.pos{color:#087443!important}.neg{color:#b42318!important}
+.btn{min-height:44px!important;border-radius:13px!important;border-color:#dfe5ed!important;background:#fff!important;color:#101828!important;font-weight:750!important;transition:.16s ease}.btn:hover{background:#f8faff!important}.btn.primary{background:linear-gradient(180deg,#1668ff,#0754e8)!important;color:#fff!important;border:0!important;box-shadow:0 8px 18px rgba(10,92,255,.18)!important}
+.inp,.ta,select.inp{background:#f9fbfd!important;color:#101828!important;border:1px solid #dfe6ef!important;border-radius:13px!important;outline:none!important}.inp:focus,.ta:focus,select.inp:focus{background:#fff!important;border-color:#0a5cff!important;box-shadow:0 0 0 3px rgba(10,92,255,.09)!important}.lab{color:#667085!important}
+.seg{background:#eff3f8!important;border-radius:14px!important;padding:4px!important}.segBtn{border-radius:10px!important;color:#667085!important}.segBtn.active{background:#fff!important;color:#0a5cff!important;box-shadow:0 3px 10px rgba(20,48,90,.08)!important}
+.sum,.li2,.qrBox,.bankPayCard{background:#f8faff!important;color:#101828!important;border:1px solid #e7edf5!important;border-radius:14px!important}
+.qrBox img{max-width:220px!important;width:min(220px,70vw)!important;height:auto!important;padding:10px!important;background:#fff!important;border-radius:15px!important;box-shadow:0 5px 16px rgba(21,47,82,.08)}
+.pixCode,.qrCode{display:none!important}
+.bankPayGrid{gap:8px!important}.bankPayCard{padding:13px!important;min-height:0!important;transition:.16s ease}.bankPayCard:hover{border-color:#cfe0ff!important;background:#f2f7ff!important}.bankPayName{color:#101828!important;font-weight:800!important}.bankPayDesc{color:#7b8798!important}
+.pendBox{background:#f8faff!important;border:1px solid #e6edf7!important;border-radius:17px!important;padding:12px!important}.pendItem{background:#fff!important;color:#101828!important;border:1px solid #e8edf4!important;border-radius:13px!important;padding:10px 11px!important;box-shadow:none!important}.pendTitle{color:#101828!important;font-weight:800!important}.pendHint,.pendSub,.pendNext{color:#7b8798!important}.pendName{color:#101828!important;font-weight:800!important}.miniBtn{height:32px!important;border-radius:10px!important;background:#0a5cff!important;color:#fff!important;font-weight:800!important;padding:0 10px!important}.dangerMini{background:#fff1f1!important;color:#b42318!important;border:1px solid #ffd8d5!important}.pendBarFill{background:#0a5cff!important}.pendDot.next{box-shadow:0 0 0 3px rgba(10,92,255,.14)!important}
+.receiptOk{background:#eaf2ff!important;color:#0a5cff!important}.receiptTitle{color:#344054!important}.receiptAmount{color:#071b3a!important}
+.empty{color:#7b8798!important}
+@media(max-width:760px){
+  .header{padding:18px 16px 30px!important;border-radius:0 0 28px 28px!important}.hello{font-size:22px!important}.page{padding:16px 10px 28px!important}.card{padding:14px!important;border-radius:20px!important}#conta.card{margin-top:-30px}.actions{grid-template-columns:repeat(3,1fr)!important;gap:7px!important}.act{min-height:82px!important}.propGrid{grid-template-columns:1fr!important}.propFilters{grid-template-columns:1fr!important}.balance{font-size:30px!important}.adminRow{align-items:flex-start!important;flex-direction:column!important}.adminBtns{width:100%!important;justify-content:flex-start!important}
+}
+@media(max-width:420px){.actions{grid-template-columns:repeat(2,1fr)!important}.act{min-height:76px!important}.iconsRow{gap:6px!important}.iconBtn{padding:0 9px!important}.gameOnly{display:none!important}}
+
 /* ===== NOTIFICAÇÕES (Modal) ===== */
 .notiList{
   display: grid;
@@ -7180,7 +7540,270 @@ function matchesQuery(p: PropertyItem, q: string) {
 }
 
 
-`}</style>
+
+        /* =====================================================
+           BLUE BANK — PREMIUM FINANCIAL UI
+           ===================================================== */
+        .wrap {
+          min-height: 100dvh;
+          background:
+            radial-gradient(circle at 8% 0%, rgba(48,128,237,.10), transparent 25%),
+            linear-gradient(180deg, #edf4ff 0, #f7f9fc 290px, #f4f7fb 100%);
+          color: #0b1220;
+          font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+        }
+        .header {
+          position: relative;
+          overflow: hidden;
+          background:
+            radial-gradient(circle at 84% -20%, rgba(103,164,255,.55), transparent 36%),
+            linear-gradient(145deg, #031a3d 0%, #05285d 48%, #0a4db8 100%);
+          padding: max(18px, env(safe-area-inset-top)) 18px 28px;
+          border-radius: 0 0 30px 30px;
+          box-shadow: 0 18px 48px rgba(4,42,98,.20);
+        }
+        .header::after {
+          content: "";
+          position: absolute;
+          width: 230px;
+          height: 230px;
+          right: -90px;
+          bottom: -150px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,.15);
+          box-shadow: 0 0 0 28px rgba(255,255,255,.035), 0 0 0 58px rgba(255,255,255,.025);
+          pointer-events: none;
+        }
+        .hTop, .hello, .sub, .gameOnly { position: relative; z-index: 1; }
+        .avatarLogo {
+          width: 44px;
+          height: 44px;
+          border-radius: 15px;
+          background: rgba(255,255,255,.14);
+          border: 1px solid rgba(255,255,255,.28);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
+        }
+        .iconsRow { gap: 8px; }
+        .iconBtn {
+          min-height: 38px;
+          padding: 8px 13px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,.20);
+          background: rgba(255,255,255,.10);
+          backdrop-filter: blur(12px);
+          color: #fff;
+          font-weight: 760;
+          transition: .16s ease;
+        }
+        .iconBtn:hover { background: rgba(255,255,255,.18); transform: translateY(-1px); }
+        .dangerBtn { background: rgba(255,255,255,.08) !important; border-color: rgba(255,180,180,.32) !important; color: #ffe7e7 !important; }
+        .hello {
+          margin-top: 22px;
+          font-size: clamp(22px, 4.8vw, 30px);
+          line-height: 1.05;
+          letter-spacing: -.8px;
+          font-weight: 820;
+        }
+        .sub { color: rgba(255,255,255,.76); font-size: 12px; font-weight: 570; }
+        .gameOnly {
+          margin-top: 12px;
+          background: rgba(255,255,255,.10);
+          border: 1px solid rgba(255,255,255,.16);
+          color: rgba(255,255,255,.82);
+          font-size: 9px;
+          letter-spacing: 1.2px;
+          padding: 6px 9px;
+        }
+        .page {
+          padding: 16px 14px 34px;
+          max-width: 1040px;
+          gap: 14px;
+        }
+        .card {
+          border-radius: 22px;
+          padding: 17px;
+          background: rgba(255,255,255,.96);
+          border: 1px solid #e1e8f2;
+          box-shadow: 0 10px 28px rgba(13,45,88,.06), 0 1px 2px rgba(13,45,88,.04);
+          color: #0b1220;
+        }
+        #conta.card {
+          position: relative;
+          overflow: hidden;
+          background:
+            radial-gradient(circle at 92% 0%, rgba(115,174,255,.50), transparent 32%),
+            linear-gradient(140deg, #05285d 0%, #073b8c 52%, #0a4db8 100%);
+          border: 1px solid rgba(255,255,255,.18);
+          box-shadow: 0 22px 55px rgba(4,55,128,.22);
+          color: #fff;
+          padding: 20px;
+        }
+        #conta.card::after {
+          content: "BI PAY";
+          position: absolute;
+          right: 20px;
+          top: 18px;
+          font-size: 10px;
+          letter-spacing: 1.6px;
+          font-weight: 850;
+          color: rgba(255,255,255,.50);
+        }
+        #conta .label { color: rgba(255,255,255,.72); font-size: 11px; letter-spacing: .8px; text-transform: uppercase; }
+        #conta .balance { color: #fff; font-size: clamp(28px, 6vw, 38px); letter-spacing: -1.5px; font-weight: 780; margin-top: 7px; }
+        #conta .chev { color: rgba(255,255,255,.55); }
+        #conta .chevBtn:hover { background: rgba(255,255,255,.10); }
+        .eyeBtn { color: #fff !important; background: rgba(255,255,255,.10) !important; border-radius: 10px !important; }
+        #conta .actions {
+          margin-top: 18px;
+          padding-top: 16px;
+          border-top: 1px solid rgba(255,255,255,.14);
+          grid-template-columns: repeat(6, minmax(0,1fr));
+          gap: 9px;
+        }
+        #conta .act {
+          min-height: 82px;
+          border-radius: 16px;
+          background: rgba(255,255,255,.105);
+          border: 1px solid rgba(255,255,255,.14);
+          color: #fff;
+          padding: 10px 7px;
+          font-size: 10px;
+          font-weight: 710;
+          backdrop-filter: blur(10px);
+          transition: transform .15s ease, background .15s ease, border-color .15s ease;
+        }
+        #conta .act:hover { transform: translateY(-2px); background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.24); }
+        #conta .act:active { transform: scale(.98); }
+        #conta .ico {
+          width: 38px;
+          height: 38px;
+          background: rgba(255,255,255,.92);
+          color: #073b8c;
+          border: 0;
+          box-shadow: 0 7px 16px rgba(2,20,55,.16);
+        }
+        #conta .pendBox {
+          margin-top: 16px;
+          background: #fff;
+          color: #0b1220;
+          border: 0;
+          border-radius: 18px;
+          box-shadow: 0 12px 26px rgba(3,26,61,.16);
+        }
+        #conta .pendBox * { color: inherit; }
+        #conta .pendBox .miniBtn { color: #fff; }
+        #conta .pendBox .dangerMini { color: #b42318; }
+        .sectionTitle, .label { color: #0b1220; font-weight: 800; letter-spacing: -.15px; }
+        .hint, .hintSmall, .adminMeta, .muted { color: #66758c; }
+        .actions { gap: 10px; }
+        .act {
+          border: 1px solid #e1e8f2;
+          background: #f7f9fc;
+          color: #163052;
+          border-radius: 16px;
+          min-height: 84px;
+          transition: .16s ease;
+        }
+        .act:hover { background: #edf4ff; border-color: #c7dcf8; transform: translateY(-1px); }
+        .ico { background: #e7f1ff; color: #0a4db8; border-color: #cfe2ff; }
+        .adminRow, .pendItem, .li2, .sum, .bankPayCard, .compactPayCard {
+          background: #f7f9fc;
+          border: 1px solid #e2e9f3;
+        }
+        .adminRow { border-radius: 17px; }
+        .adminName, .pendName { color: #10223d; }
+        .pillBtn, .miniBtn, .btn.primary, .rowBtn.primary {
+          background: linear-gradient(180deg, #1468df, #0a4db8);
+          color: #fff;
+          border: 0;
+          box-shadow: 0 6px 15px rgba(10,77,184,.16);
+        }
+        .pillBtn.ghost, .miniBtn.ghost, .btn:not(.primary), .rowBtn:not(.primary) {
+          background: #edf4ff;
+          color: #073b8c;
+          border: 1px solid #d5e6fb;
+          box-shadow: none;
+        }
+        .danger, .dangerBtn, .dangerMini, .pillBtn.danger {
+          background: #fff0ef !important;
+          color: #b42318 !important;
+          border: 1px solid #ffd3cf !important;
+          box-shadow: none !important;
+        }
+        .btn, .miniBtn, .pillBtn, .rowBtn {
+          border-radius: 12px;
+          min-height: 38px;
+          font-weight: 760;
+          transition: transform .14s ease, filter .14s ease, background .14s ease;
+        }
+        .btn:active, .miniBtn:active, .pillBtn:active, .rowBtn:active { transform: scale(.985); }
+        .linkBtn { color: #0a4db8; }
+        .linkBtn:hover { background: #edf4ff; }
+        .propViewTabs { background: #edf2f8; border: 1px solid #e1e8f2; }
+        .propViewBtn { color: #52637c; }
+        .propViewBtn.active { color: #073b8c; box-shadow: 0 4px 12px rgba(10,42,89,.08); }
+        .propViewBtn.active span { background: #e4efff; color: #0a4db8; }
+        .propSearch, .propSelect, .inp, .ta, select.inp, .pixInput {
+          border: 1px solid #dbe4f0;
+          background: #f9fbfe;
+          color: #0b1220;
+          border-radius: 13px;
+          outline: none;
+          transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+        }
+        .propSearch:focus, .propSelect:focus, .inp:focus, .ta:focus, .pixInput:focus {
+          border-color: #2f80ed;
+          background: #fff;
+          box-shadow: 0 0 0 4px rgba(47,128,237,.10);
+        }
+        .pMiniCard, .pBackCard {
+          border-radius: 18px;
+          border: 1px solid #dfe7f1;
+          box-shadow: 0 8px 22px rgba(13,45,88,.06);
+          overflow: hidden;
+          background: #fff;
+        }
+        .pOwner, .pBackOwner { color: #5f6f85; }
+        .pendBox { border: 1px solid #dfe7f1; border-radius: 18px; background: #fff; }
+        .pendItem { border-radius: 14px; padding: 11px; }
+        .pendBar { background: #e8eef6; }
+        .pendBarFill { background: linear-gradient(90deg, #2f80ed, #0a4db8); }
+        .empty, .pendEmpty {
+          background: #f7f9fc;
+          border: 1px dashed #d6e0ec;
+          color: #65758a;
+          border-radius: 15px;
+        }
+        .receiptOk { background: #e8f2ff; color: #0a4db8; }
+        .receiptTitle { color: #17345f; }
+        .receiptAmount { color: #07152c; }
+        .qrBox, .compactQrBox, .sellQrBox {
+          background: #fff;
+          border: 1px solid #dfe7f1;
+          border-radius: 18px;
+          box-shadow: 0 8px 24px rgba(13,45,88,.06);
+        }
+        .qrImg, .sellQrImg { border-radius: 14px; background: #fff; padding: 8px; }
+        .copyRow { gap: 8px; }
+        .copyIconBtn { background: #edf4ff; color: #073b8c; border: 1px solid #d4e5fb; }
+        .blocked { border-radius: 13px; }
+        .badge { background: #fff; color: #0a4db8; border: 2px solid #073b8c; }
+
+        @media (max-width: 820px) {
+          #conta .actions { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 560px) {
+          .header { padding-left: 15px; padding-right: 15px; border-radius: 0 0 25px 25px; }
+          .page { padding: 13px 11px 30px; }
+          .card { border-radius: 19px; padding: 14px; }
+          #conta.card { padding: 17px 14px; }
+          #conta .actions { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; }
+          #conta .act { min-height: 76px; padding: 9px 4px; font-size: 9.5px; }
+          .adminRow { align-items: flex-start; }
+          .adminBtns { justify-content: flex-start; margin-top: 7px; }
+        }
+
+      `}</style>
 
   <Modal open={notifOpen} title="Notificações" onClose={() => setNotifOpen(false)}>
     <div className="notiList">

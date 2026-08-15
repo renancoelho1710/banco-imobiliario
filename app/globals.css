@@ -1,27 +1,53 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0f0f12;
-  --foreground: #ffffff;
-  --card: #1c1c1f;
-  --card-foreground: #ffffff;
-  --primary: #8a05be;
-  --primary-hover: #6f04a8;
-  --danger: #ef4444;
+  --background: #f4f7fc;
+  --foreground: #0b1220;
+  --surface: #ffffff;
+  --surface-soft: #f7f9fd;
+  --line: #dbe5f3;
+  --blue-950: #031a3d;
+  --blue-900: #05285d;
+  --blue-800: #073b8c;
+  --blue-700: #0a4db8;
+  --blue-600: #1468df;
+  --blue-500: #2f80ed;
+  --blue-100: #e9f2ff;
+  --danger: #d92d20;
+  --success: #067647;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-primary: var(--primary);
-  --color-primary-hover: var(--primary-hover);
+  --color-primary: var(--blue-700);
   --color-danger: var(--danger);
 }
 
+* { box-sizing: border-box; }
+html { background: var(--background); }
 body {
+  margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, sans-serif;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, select, textarea { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+::selection { background: #cfe3ff; color: #031a3d; }
+
+:focus-visible {
+  outline: 3px solid rgba(20, 104, 223, .28);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
 }
