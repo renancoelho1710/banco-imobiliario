@@ -5303,6 +5303,7 @@ function matchesQuery(p: PropertyItem, q: string) {
       <Modal
         open={rentOpen}
         title="Receber aluguel"
+        variant={rentQrUrl ? 'scroll' : 'compact'}
         onClose={() => {
           setRentOpen(false);
           setRentPropId('');
@@ -5429,10 +5430,26 @@ function matchesQuery(p: PropertyItem, q: string) {
               )}
 
               {prop.kind === 'MULTIPLIER' ? (
-                <>
-                  <div className="field">
-                    <div className="lab">Soma dos dados (ex: 2 + 5 = 7)</div>
-                    <input className="inp" type="number" value={rentDiceSum} onChange={(e) => setRentDiceSum(Number(e.target.value || 0))} />
+                <div className="diceRentCompact">
+                  <div className="diceInputRow">
+                    <div>
+                      <div className="lab">Soma dos dados</div>
+                      <div className="mHint">Ex.: 2 + 5 = 7</div>
+                    </div>
+                    <input
+                      className="inp diceInp"
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={99}
+                      value={rentDiceSum}
+                      onChange={(e) => setRentDiceSum(Number(e.target.value || 0))}
+                    />
+                  </div>
+
+                  <div className="diceTotal">
+                    <span>Aluguel</span>
+                    <b>{money((prop.multiplierValue || 0) * Math.max(0, Number(rentDiceSum || 0)))}</b>
                   </div>
 
                   <button
@@ -5442,9 +5459,9 @@ function matchesQuery(p: PropertyItem, q: string) {
                       chargeRent(amt, `${titleBase} • Dados: ${rentDiceSum}`, { type: 'RENT', propId: prop.id, mode: 'MULTIPLIER', diceSum: rentDiceSum });
                     }}
                   >
-                    {rentPaymentMethod === 'pix' ? 'Gerar Pix' : 'Registrar dinheiro'} (valor = {money((prop.multiplierValue || 0) * Math.max(0, Number(rentDiceSum || 0)))})
+                    {rentPaymentMethod === 'pix' ? 'Cobrar por Pix' : 'Registrar em dinheiro'}
                   </button>
-                </>
+                </div>
               ) : (
                 <>
                   <div className="gridRent">
@@ -5470,39 +5487,31 @@ function matchesQuery(p: PropertyItem, q: string) {
                 </>
               )}
 
-              <div className="row2">
-  <button
-    className="btn primary"
-    onClick={() => {
-      const amount =
-        prop.kind === 'MULTIPLIER'
-          ? (prop.multiplierValue || 0) * Math.max(0, Number(rentDiceSum || 0))
-          : prop.baseRent || 0;
-      chargeRent(amount, `${titleBase} • Cobrança rápida`, {
-        type: 'RENT',
-        propId: prop.id,
-        tier: prop.kind === 'MULTIPLIER' ? 'dice' : 'base',
-        diceSum: prop.kind === 'MULTIPLIER' ? rentDiceSum : undefined,
-      });
-    }}
-  >
-    {rentPaymentMethod === 'pix' ? 'Gerar cobrança Pix' : 'Registrar aluguel em dinheiro'}
-  </button>
+              <div className={prop.kind === 'MULTIPLIER' ? 'row2 compactActions' : 'row2'}>
+                {prop.kind !== 'MULTIPLIER' && (
+                  <button
+                    className="btn primary"
+                    onClick={() => {
+                      const amount = prop.baseRent || 0;
+                      chargeRent(amount, `${titleBase} • Cobrança rápida`, {
+                        type: 'RENT',
+                        propId: prop.id,
+                        tier: 'base',
+                      });
+                    }}
+                  >
+                    {rentPaymentMethod === 'pix' ? 'Gerar cobrança Pix' : 'Registrar aluguel em dinheiro'}
+                  </button>
+                )}
 
-  <button
-    className="btn"
-    onClick={() => openTransfer(prop.id)}
-  >
-    Vender / Transferir ({money(prop.sellValue)})
-  </button>
+                <button className="btn" onClick={() => openTransfer(prop.id)}>
+                  Vender / Transferir ({money(prop.sellValue)})
+                </button>
 
-  <button
-    className="btn"
-    onClick={() => setRentOpen(false)}
-  >
-    Fechar
-  </button>
-</div>
+                <button className="btn" onClick={() => setRentOpen(false)}>
+                  Fechar
+                </button>
+              </div>
 
 
               {rentCashMsg && <div className="mHint" style={{ marginTop: 8 }}><b>{rentCashMsg}</b></div>}
@@ -6655,6 +6664,58 @@ function matchesQuery(p: PropertyItem, q: string) {
           display: grid;
           grid-template-columns: 1fr;
           gap: 8px;
+        }
+
+        /* Aluguel por soma dos dados: card curto e fácil de usar no celular. */
+        .diceRentCompact {
+          display: grid;
+          gap: 8px;
+        }
+        .diceInputRow {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 8px 10px;
+          border-radius: 14px;
+          background: #f2f2f7;
+        }
+        .diceInp {
+          width: 84px;
+          min-width: 84px;
+          padding: 10px 8px !important;
+          text-align: center;
+          font-size: 18px;
+          font-weight: 1000;
+        }
+        .diceTotal {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 8px 10px;
+          border-radius: 14px;
+          background: #eef7f4;
+          color: #111;
+          font-size: 13px;
+        }
+        .diceTotal b {
+          font-size: 16px;
+          color: #0b5d4a;
+        }
+        .compactActions {
+          gap: 8px;
+        }
+        .compactActions .btn {
+          flex: 1 1 auto;
+          padding: 10px 9px;
+          font-size: 12px;
+        }
+        @media (max-width: 520px) {
+          .compactActions {
+            display: grid;
+            grid-template-columns: 1fr 86px;
+          }
         }
       /* ===== VENDER PROPRIEDADE: SEM ROLAGEM E CABENDO NO POPUP ===== */
 .sellFit{
