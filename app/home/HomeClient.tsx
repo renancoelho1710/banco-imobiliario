@@ -71,6 +71,28 @@ type PurchaseRequestDoc = {
   completedAt?: number;
 };
 
+type ConstructionRequestStatus = 'requested' | 'approved' | 'completed' | 'cancelled';
+type ConstructionKind = 'house' | 'hotel';
+type ConstructionPaymentMethod = 'pix' | 'bank_transfer' | 'cash';
+
+type ConstructionRequestDoc = {
+  id: string;
+  at: number;
+  roomCode: string;
+  propId: string;
+  propName: string;
+  playerUid: string;
+  playerName: string;
+  kind: ConstructionKind;
+  targetHouses: number;
+  amount: number;
+  status: ConstructionRequestStatus;
+  paymentMethod?: ConstructionPaymentMethod;
+  paymentId?: string;
+  approvedAt?: number;
+  completedAt?: number;
+};
+
 type SaleDoc = {
   id: string;
   at: number;
@@ -245,6 +267,38 @@ function transferPaidBankSaleInState(state: any, sale: any) {
     state.purchaseRequests[sale.requestId].saleId = sale.id;
   }
 
+  return true;
+}
+
+
+function applyConstructionRequestInState(state: any, request: any) {
+  if (!state || !request || request.status !== 'approved') return false;
+
+  const rawProps = state.properties || [];
+  const props: PropertyItem[] = Array.isArray(rawProps) ? rawProps : Object.values(rawProps);
+  const idx = props.findIndex((p) => p?.id === request.propId);
+  if (idx < 0) return false;
+
+  const prop = props[idx];
+  if (!prop || prop.ownerUid !== request.playerUid || prop.kind !== 'NORMAL') return false;
+
+  if (request.kind === 'house') {
+    const currentHouses = Math.max(0, Number(prop.houses || 0));
+    const target = Math.max(1, Number(request.targetHouses || currentHouses + 1));
+    if (prop.hasHotel || currentHouses >= 4 || target !== currentHouses + 1 || target > 4) return false;
+    prop.houses = target as 0 | 1 | 2 | 3 | 4;
+  } else {
+    if (prop.hasHotel || Number(prop.houses || 0) !== 4) return false;
+    prop.houses = 0;
+    prop.hasHotel = true;
+  }
+
+  props[idx] = prop;
+  state.properties = props;
+  request.status = 'completed';
+  request.completedAt = Date.now();
+  state.constructionRequests = state.constructionRequests || {};
+  state.constructionRequests[request.id] = request;
   return true;
 }
 
@@ -1269,6 +1323,12 @@ const [txErr, setTxErr] = useState('');
   const [rentQrUrl, setRentQrUrl] = useState('');
   const [rentCode, setRentCode] = useState('');
 
+  // construção: jogador solicita -> Banco aprova -> pagamento -> casa/hotel aplicado
+  const [constructionQrOpen, setConstructionQrOpen] = useState(false);
+  const [constructionQrUrl, setConstructionQrUrl] = useState('');
+  const [constructionCode, setConstructionCode] = useState('');
+  const [constructionQrRequest, setConstructionQrRequest] = useState<ConstructionRequestDoc | null>(null);
+
   // venda/transferência entre jogadores (gera QR e bancário confirma transferência)
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferPropId, setTransferPropId] = useState('');
@@ -1298,6 +1358,8 @@ const [txErr, setTxErr] = useState('');
   const lastNotifAtRef = useRef<number>(Date.now());
   const seenPurchaseRequestIdsRef = useRef<Set<string> | null>(null);
   const seenChargeIdsRef = useRef<Set<string> | null>(null);
+  const seenConstructionRequestIdsRef = useRef<Set<string> | null>(null);
+  const seenConstructionChargeIdsRef = useRef<Set<string> | null>(null);
 // finalizar partida (só bancário)
 const [endGameOpen, setEndGameOpen] = useState(false);
 const [endWinnerUid, setEndWinnerUid] = useState('');
@@ -1613,6 +1675,42 @@ useEffect(() => {
     return pendingPurchaseRequests;
   }, [pendingPurchaseRequests, role]);
 
+  const constructionRequestsArr = useMemo(() => {
+    const raw: any = (room as any)?.constructionRequests;
+    if (!raw) return [] as ConstructionRequestDoc[];
+    const arr = Array.isArray(raw) ? raw : Object.values(raw);
+    return (arr as ConstructionRequestDoc[])
+      .filter(Boolean)
+      .sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
+  }, [room]);
+
+  const activeConstructionRequests = useMemo(() => {
+    return constructionRequestsArr.filter((request) => {
+      if (!request || (request.status !== 'requested' && request.status !== 'approved')) return false;
+      const player = room?.players?.[request.playerUid];
+      const prop = propsAll.find((item) => item.id === request.propId);
+      if (!player || !prop) return false;
+      if (player.status === 'falido' || player.status === 'desistente') return false;
+      if (prop.ownerUid !== request.playerUid || prop.kind !== 'NORMAL') return false;
+      if (request.kind === 'house') {
+        const current = Number(prop.houses || 0);
+        const target = Number(request.targetHouses || 0);
+        return !prop.hasHotel && current < 4 && target === current + 1;
+      }
+      return !prop.hasHotel && Number(prop.houses || 0) === 4;
+    });
+  }, [constructionRequestsArr, room, propsAll]);
+
+  const myConstructionRequests = useMemo(() => {
+    if (role !== 'jogador') return [] as ConstructionRequestDoc[];
+    return activeConstructionRequests.filter((request) => request.playerUid === uid);
+  }, [activeConstructionRequests, role, uid]);
+
+  const bankerConstructionRequests = useMemo(() => {
+    if (role !== 'bancario') return [] as ConstructionRequestDoc[];
+    return activeConstructionRequests;
+  }, [activeConstructionRequests, role]);
+
   const transfersArr = useMemo(() => {
     const raw: any = (room as any)?.transfers;
     if (!raw) return [] as TransferDoc[];
@@ -1655,8 +1753,10 @@ useEffect(() => {
     bankerPendingPropertyTransfers.forEach((item) => ids.add(`transfer:${item.id}`));
     bankerPurchaseRequests.forEach((item) => ids.add(`request:${item.id}`));
     myPendingPurchaseRequests.forEach((item) => ids.add(`request:${item.id}`));
+    bankerConstructionRequests.forEach((item) => ids.add(`construction:${item.id}`));
+    myConstructionRequests.forEach((item) => ids.add(`construction:${item.id}`));
     return ids.size;
-  }, [pendingSales, pendingBankPropertyTransfers, bankerPendingPropertyTransfers, bankerPurchaseRequests, myPendingPurchaseRequests]);
+  }, [pendingSales, pendingBankPropertyTransfers, bankerPendingPropertyTransfers, bankerPurchaseRequests, myPendingPurchaseRequests, bankerConstructionRequests, myConstructionRequests]);
 
   const cancelablePendingCount = useMemo(() => {
     let count = 0;
@@ -1664,8 +1764,11 @@ useEffect(() => {
     count += pendingSales.filter((sale: any) => sale.status === 'pending_payment' && countPaidSaleInstallments(sale) === 0).length;
     count += pendingBankPropertyTransfers.length;
     count += bankerPendingPropertyTransfers.length;
+    count += role === 'bancario'
+      ? bankerConstructionRequests.length
+      : myConstructionRequests.length;
     return count;
-  }, [role, bankerPurchaseRequests, myPendingPurchaseRequests, pendingSales, pendingBankPropertyTransfers, bankerPendingPropertyTransfers]);
+  }, [role, bankerPurchaseRequests, myPendingPurchaseRequests, pendingSales, pendingBankPropertyTransfers, bankerPendingPropertyTransfers, bankerConstructionRequests, myConstructionRequests]);
 
   useEffect(() => {
     if (role !== 'bancario') {
@@ -1695,6 +1798,66 @@ useEffect(() => {
     }
     seenPurchaseRequestIdsRef.current = ids;
   }, [role, bankerPurchaseRequests]);
+
+  useEffect(() => {
+    if (role !== 'bancario') {
+      seenConstructionRequestIdsRef.current = null;
+      return;
+    }
+    const requested = bankerConstructionRequests.filter((request) => request.status === 'requested');
+    const ids = new Set(requested.map((request) => request.id));
+    const previous = seenConstructionRequestIdsRef.current;
+    if (previous === null) {
+      seenConstructionRequestIdsRef.current = ids;
+      return;
+    }
+    const incoming = requested.filter((request) => !previous.has(request.id));
+    if (incoming.length > 0) {
+      playBankSound('request');
+      setNotifUnread((count) => count + incoming.length);
+      setNotifs((current) => [
+        ...incoming.map((request): NotifItem => ({
+          id: `construction-request-${request.id}`,
+          at: Number(request.at || Date.now()),
+          title: request.kind === 'hotel' ? 'Nova solicitação de hotel' : 'Nova solicitação de casa',
+          detail: `${request.playerName} • ${request.propName} • ${money(request.amount)}`,
+          kind: 'info',
+        })),
+        ...current,
+      ].slice(0, 40));
+    }
+    seenConstructionRequestIdsRef.current = ids;
+  }, [role, bankerConstructionRequests]);
+
+  useEffect(() => {
+    if (role !== 'jogador') {
+      seenConstructionChargeIdsRef.current = null;
+      return;
+    }
+    const approved = myConstructionRequests.filter((request) => request.status === 'approved');
+    const ids = new Set(approved.map((request) => `${request.id}:${request.paymentMethod || ''}`));
+    const previous = seenConstructionChargeIdsRef.current;
+    if (previous === null) {
+      seenConstructionChargeIdsRef.current = ids;
+      return;
+    }
+    const incoming = approved.filter((request) => !previous.has(`${request.id}:${request.paymentMethod || ''}`));
+    if (incoming.length > 0) {
+      playBankSound('request');
+      setNotifUnread((count) => count + incoming.length);
+      setNotifs((current) => [
+        ...incoming.map((request): NotifItem => ({
+          id: `construction-approved-${request.id}`,
+          at: Number(request.approvedAt || Date.now()),
+          title: request.kind === 'hotel' ? 'Hotel aprovado pelo Banco' : 'Casa aprovada pelo Banco',
+          detail: `${request.propName} • ${money(request.amount)} • ${request.paymentMethod === 'pix' ? 'Pix' : request.paymentMethod === 'bank_transfer' ? 'Transferência' : 'Dinheiro'}`,
+          kind: 'success',
+        })),
+        ...current,
+      ].slice(0, 40));
+    }
+    seenConstructionChargeIdsRef.current = ids;
+  }, [role, myConstructionRequests]);
 
   useEffect(() => {
     if (role !== 'jogador') {
@@ -2262,6 +2425,26 @@ function openOnlineTransfer() {
           if (!saleProp || saleProp.ownerUid !== BANK_UID) return;
         }
 
+        // Valida construção aprovada pelo Banco antes de movimentar o dinheiro.
+        if (payloadToPay.kind === 'TRANSFER' && payloadToPay.meta?.type === 'CONSTRUCTION') {
+          const requestId = payloadToPay.meta?.requestId as string | undefined;
+          const request = requestId ? state.constructionRequests?.[requestId] : null;
+          if (!request || request.status !== 'approved' || request.paymentMethod !== 'pix') return;
+          if (request.playerUid !== payerUid || toUid !== BANK_UID) return;
+          if (Number(request.amount || 0) !== amount) return;
+
+          const props: PropertyItem[] = Array.isArray(state.properties)
+            ? state.properties
+            : Object.values(state.properties || {});
+          const prop = props.find((item) => item?.id === request.propId);
+          if (!prop || prop.ownerUid !== payerUid || prop.kind !== 'NORMAL') return;
+          if (request.kind === 'house') {
+            if (prop.hasHotel || Number(prop.houses || 0) + 1 !== Number(request.targetHouses || 0)) return;
+          } else if (prop.hasHotel || Number(prop.houses || 0) !== 4) {
+            return;
+          }
+        }
+
         // Valida compra entre jogadores antes de movimentar.
         if (payloadToPay.kind === 'TRANSFER' && payloadToPay.meta?.type === 'PROP_TRANSFER') {
           const transferId = payloadToPay.meta?.transferId as string | undefined;
@@ -2317,6 +2500,12 @@ function openOnlineTransfer() {
           state.notifications.banker = { type: 'TRANSFER_PAID', transferId, at: Date.now() };
         }
 
+        if (payloadToPay.kind === 'TRANSFER' && payloadToPay.meta?.type === 'CONSTRUCTION') {
+          const requestId = payloadToPay.meta?.requestId as string;
+          const request = state.constructionRequests?.[requestId];
+          if (!request || !applyConstructionRequestInState(state, request)) return;
+        }
+
         state.processedPayments[paymentId] = {
           id: paymentId,
           at: Date.now(),
@@ -2337,7 +2526,7 @@ function openOnlineTransfer() {
 
       const meta = payloadToPay.meta;
       const kindPaid: LedgerItem['kind'] =
-        payloadToPay.kind === 'BUY_INSTALLMENT'
+        payloadToPay.kind === 'BUY_INSTALLMENT' || meta?.type === 'CONSTRUCTION'
           ? 'compra'
           : meta?.type === 'BAIL'
           ? 'fiança'
@@ -2346,7 +2535,7 @@ function openOnlineTransfer() {
           : 'pago';
 
       const kindReceived: LedgerItem['kind'] =
-        payloadToPay.kind === 'BUY_INSTALLMENT'
+        payloadToPay.kind === 'BUY_INSTALLMENT' || meta?.type === 'CONSTRUCTION'
           ? 'venda'
           : meta?.type === 'RENT'
           ? 'aluguel'
@@ -2491,6 +2680,300 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
     });
   }
 
+  function constructionRequestLabel(request: ConstructionRequestDoc) {
+    return request.kind === 'hotel' ? 'Hotel' : `${Math.max(1, request.targetHouses)}ª casa`;
+  }
+
+  function nextConstructionForProperty(prop: PropertyItem) {
+    if (!prop || prop.kind !== 'NORMAL' || prop.ownerUid !== uid || prop.hasHotel) return null;
+    const houses = Math.max(0, Number(prop.houses || 0));
+    if (houses < 4) {
+      return {
+        kind: 'house' as ConstructionKind,
+        targetHouses: houses + 1,
+        amount: Math.max(0, Number(prop.houseCost || 0)),
+        label: `${houses + 1}ª casa`,
+      };
+    }
+    return {
+      kind: 'hotel' as ConstructionKind,
+      targetHouses: 4,
+      amount: Math.max(0, Number(prop.hotelCost || 0)),
+      label: 'Hotel',
+    };
+  }
+
+  async function requestConstruction(prop: PropertyItem) {
+    if (!room || !me || role !== 'jogador' || isClosed) return;
+    if (prop.ownerUid !== uid || prop.kind !== 'NORMAL') {
+      window.alert('Você só pode solicitar construção em uma propriedade sua.');
+      return;
+    }
+
+    const next = nextConstructionForProperty(prop);
+    if (!next) {
+      window.alert(prop.hasHotel ? 'Essa propriedade já possui hotel.' : 'Não há construção disponível para essa propriedade.');
+      return;
+    }
+
+    const duplicate = constructionRequestsArr.find(
+      (request) =>
+        (request.status === 'requested' || request.status === 'approved') &&
+        request.playerUid === uid &&
+        request.propId === prop.id
+    );
+    if (duplicate) {
+      window.alert('Já existe uma solicitação de construção pendente para essa propriedade.');
+      setRentOpen(false);
+      setFocus('pend');
+      return;
+    }
+
+    const ok = window.confirm(
+      `Solicitar ${next.label} para ${prop.name} por ${money(next.amount)}?\n\nO Banco deverá aprovar e escolher Pix, Transferência ou Dinheiro.`
+    );
+    if (!ok) return;
+
+    const requestId = `construction-${idNow()}`;
+    const request: ConstructionRequestDoc = {
+      id: requestId,
+      at: Date.now(),
+      roomCode,
+      propId: prop.id,
+      propName: prop.name,
+      playerUid: uid,
+      playerName: me.name,
+      kind: next.kind,
+      targetHouses: next.targetHouses,
+      amount: next.amount,
+      status: 'requested',
+    };
+
+    const result = await runTransaction(ref(db, roomRefBase), (state: any) => {
+      if (!state) return;
+      const player = state.players?.[uid];
+      if (!player || player.status === 'falido' || player.status === 'desistente') return;
+
+      const props: PropertyItem[] = Array.isArray(state.properties)
+        ? state.properties
+        : Object.values(state.properties || {});
+      const currentProp = props.find((item) => item?.id === prop.id);
+      if (!currentProp || currentProp.ownerUid !== uid || currentProp.kind !== 'NORMAL') return;
+
+      const currentHouses = Math.max(0, Number(currentProp.houses || 0));
+      if (next.kind === 'house') {
+        if (currentProp.hasHotel || currentHouses + 1 !== next.targetHouses || next.targetHouses > 4) return;
+      } else if (currentProp.hasHotel || currentHouses !== 4) {
+        return;
+      }
+
+      state.constructionRequests = state.constructionRequests || {};
+      const hasDuplicate = Object.values(state.constructionRequests).some((item: any) =>
+        item &&
+        (item.status === 'requested' || item.status === 'approved') &&
+        item.playerUid === uid &&
+        item.propId === prop.id
+      );
+      if (hasDuplicate) return;
+
+      state.constructionRequests[requestId] = request;
+      return state;
+    });
+
+    if (!result.committed) {
+      window.alert('Não foi possível enviar a solicitação. A propriedade pode ter mudado ou já existe uma construção pendente.');
+      return;
+    }
+
+    setRentOpen(false);
+    setFocus('pend');
+    playBankSound('success');
+  }
+
+  function constructionPayload(request: ConstructionRequestDoc): QrPayload | null {
+    if (!request.paymentId || request.status !== 'approved' || request.paymentMethod !== 'pix') return null;
+    return {
+      v: 1,
+      room: roomCode,
+      paymentId: request.paymentId,
+      kind: 'TRANSFER',
+      toUid: BANK_UID,
+      toName: BANK_NAME,
+      amount: request.amount,
+      title: `Construção • ${constructionRequestLabel(request)} • ${request.propName}`.slice(0, 80),
+      createdAt: request.approvedAt || request.at || Date.now(),
+      meta: {
+        type: 'CONSTRUCTION',
+        requestId: request.id,
+        propId: request.propId,
+        constructionKind: request.kind,
+        targetHouses: request.targetHouses,
+      },
+    };
+  }
+
+  async function showConstructionQr(request: ConstructionRequestDoc) {
+    const payload = constructionPayload(request);
+    if (!payload) return;
+    const code = makeCode(payload);
+    setConstructionQrRequest(request);
+    setConstructionCode(code);
+    setConstructionQrUrl(await makeQrDataUrl(code));
+    setConstructionQrOpen(true);
+  }
+
+  async function approveConstructionRequest(request: ConstructionRequestDoc, method: ConstructionPaymentMethod) {
+    if (!room || role !== 'bancario' || request.status !== 'requested') return;
+    const paymentId = method === 'pix' ? `construction-pay-${idNow()}` : undefined;
+
+    const result = await runTransaction(ref(db, roomRefBase), (state: any) => {
+      if (!state) return;
+      const current = state.constructionRequests?.[request.id];
+      if (!current || current.status !== 'requested') return;
+
+      const player = state.players?.[current.playerUid];
+      if (!player || player.status === 'falido' || player.status === 'desistente') return;
+      const props: PropertyItem[] = Array.isArray(state.properties)
+        ? state.properties
+        : Object.values(state.properties || {});
+      const prop = props.find((item) => item?.id === current.propId);
+      if (!prop || prop.ownerUid !== current.playerUid || prop.kind !== 'NORMAL') return;
+
+      if (current.kind === 'house') {
+        if (prop.hasHotel || Number(prop.houses || 0) + 1 !== Number(current.targetHouses || 0)) return;
+      } else if (prop.hasHotel || Number(prop.houses || 0) !== 4) {
+        return;
+      }
+
+      current.status = 'approved';
+      current.paymentMethod = method;
+      current.approvedAt = Date.now();
+      if (paymentId) current.paymentId = paymentId;
+      state.constructionRequests[request.id] = current;
+      return state;
+    });
+
+    if (!result.committed) {
+      window.alert('Não foi possível aprovar. A solicitação pode ter mudado ou a propriedade não permite mais essa construção.');
+      return;
+    }
+
+    const approved: ConstructionRequestDoc = {
+      ...request,
+      status: 'approved',
+      paymentMethod: method,
+      approvedAt: Date.now(),
+      ...(paymentId ? { paymentId } : {}),
+    };
+
+    if (method === 'pix') {
+      await showConstructionQr(approved);
+    } else {
+      playBankSound('success');
+    }
+  }
+
+  async function payConstructionByBankTransfer(request: ConstructionRequestDoc) {
+    if (!room || !me || role !== 'jogador') return;
+    if (request.status !== 'approved' || request.paymentMethod !== 'bank_transfer' || request.playerUid !== uid) return;
+    const amount = Math.max(0, Number(request.amount || 0));
+    if ((me.balance || 0) < amount) {
+      window.alert('Saldo insuficiente para concluir a transferência.');
+      return;
+    }
+
+    const ok = window.confirm(`Transferir ${money(amount)} ao Banco para comprar ${constructionRequestLabel(request)} em ${request.propName}?`);
+    if (!ok) return;
+
+    const result = await runTransaction(ref(db, roomRefBase), (state: any) => {
+      if (!state) return;
+      const current = state.constructionRequests?.[request.id];
+      const player = state.players?.[uid];
+      if (!current || current.status !== 'approved' || current.paymentMethod !== 'bank_transfer' || current.playerUid !== uid || !player) return;
+      if (player.status === 'falido' || player.status === 'desistente' || (player.balance || 0) < amount) return;
+      if (Number(current.amount || 0) !== amount) return;
+
+      player.balance = (player.balance || 0) - amount;
+      state.players[uid] = player;
+      state.players[BANK_UID] = state.players[BANK_UID] || { uid: BANK_UID, name: BANK_NAME, role: 'bancario', status: 'ativo', balance: BANK_BALANCE, debtToBank: 0 };
+      state.players[BANK_UID].balance = BANK_BALANCE;
+      if (!applyConstructionRequestInState(state, current)) return;
+      return state;
+    });
+
+    if (!result.committed) {
+      window.alert('Não foi possível concluir. A solicitação pode já ter sido paga ou a propriedade mudou.');
+      return;
+    }
+
+    const title = `Construção • ${constructionRequestLabel(request)} • ${request.propName} • Transferência bancária`;
+    await pushLedgerPair({
+      title,
+      amount,
+      fromUid: uid,
+      fromName: me.name,
+      toUid: BANK_UID,
+      toName: BANK_NAME,
+      kindPaid: 'compra',
+      kindReceived: 'venda',
+      meta: { type: 'CONSTRUCTION', paymentMethod: 'bank_transfer', requestId: request.id, propId: request.propId },
+    });
+
+    setLastReceipt({ id: `construction-transfer-${request.id}-${Date.now()}`, at: Date.now(), title, amount, fromName: me.name, toName: BANK_NAME, method: 'bank_transfer' });
+    setReceiptOpen(true);
+    playBankSound('transfer');
+  }
+
+  async function registerConstructionCash(request: ConstructionRequestDoc) {
+    if (!room || role !== 'bancario') return;
+    if (request.status !== 'approved' || request.paymentMethod !== 'cash') return;
+    const ok = window.confirm(`Confirmar ${money(request.amount)} em dinheiro para ${constructionRequestLabel(request)} de ${request.playerName}?`);
+    if (!ok) return;
+
+    const result = await runTransaction(ref(db, roomRefBase), (state: any) => {
+      if (!state) return;
+      const current = state.constructionRequests?.[request.id];
+      if (!current || current.status !== 'approved' || current.paymentMethod !== 'cash') return;
+      if (!applyConstructionRequestInState(state, current)) return;
+      return state;
+    });
+
+    if (!result.committed) {
+      window.alert('Não foi possível registrar. A construção pode já ter sido concluída ou a propriedade mudou.');
+      return;
+    }
+
+    await pushLedgerPair({
+      title: `Construção • ${constructionRequestLabel(request)} • ${request.propName} • Dinheiro`,
+      amount: request.amount,
+      fromUid: request.playerUid,
+      fromName: request.playerName,
+      toUid: BANK_UID,
+      toName: BANK_NAME,
+      kindPaid: 'compra',
+      kindReceived: 'venda',
+      meta: { type: 'CONSTRUCTION', paymentMethod: 'cash', requestId: request.id, propId: request.propId },
+    });
+    playBankSound('success');
+    window.alert(`${constructionRequestLabel(request)} adicionada em ${request.propName}.`);
+  }
+
+  async function cancelConstructionRequest(request: ConstructionRequestDoc) {
+    const canCancel = role === 'bancario' || (role === 'jogador' && request.playerUid === uid);
+    if (!canCancel || (request.status !== 'requested' && request.status !== 'approved')) return;
+    const ok = window.confirm(`Cancelar a solicitação de ${constructionRequestLabel(request)} para ${request.propName}?`);
+    if (!ok) return;
+
+    await runTransaction(ref(db, `${roomRefBase}/constructionRequests/${request.id}`), (current: any) => {
+      if (!current || (current.status !== 'requested' && current.status !== 'approved')) return;
+      if (role === 'jogador' && current.playerUid !== uid) return;
+      current.status = 'cancelled';
+      current.cancelledAt = Date.now();
+      current.cancelledBy = uid;
+      return current;
+    });
+  }
+
   function countPaidSaleInstallments(saleLike: any) {
     const installments = Math.max(1, Number(saleLike?.installments || 1));
     const paidArr: boolean[] = Array.isArray(saleLike?.paidInstallments)
@@ -2614,6 +3097,15 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
         tr.status = 'cancelled';
         tr.cancelledAt = now;
         tr.cancelledBy = uid;
+      });
+
+      state.constructionRequests = state.constructionRequests || {};
+      Object.values(state.constructionRequests).forEach((request: any) => {
+        if (!request || (request.status !== 'requested' && request.status !== 'approved')) return;
+        if (role === 'jogador' && request.playerUid !== uid) return;
+        request.status = 'cancelled';
+        request.cancelledAt = now;
+        request.cancelledBy = uid;
       });
 
       return state;
@@ -3226,6 +3718,16 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
         });
       }
 
+      if (state.constructionRequests) {
+        Object.values(state.constructionRequests).forEach((request: any) => {
+          if (request?.playerUid === playerUid && request.status !== 'completed') {
+            request.status = 'cancelled';
+            request.cancelledAt = Date.now();
+            request.cancelReason = 'player_account_closed';
+          }
+        });
+      }
+
       if (state.players[BANK_UID]) state.players[BANK_UID].balance = BANK_BALANCE;
       return state;
     });
@@ -3536,15 +4038,15 @@ function matchesQuery(p: PropertyItem, q: string) {
               )}
             
                           {/* PENDÊNCIAS / PARCELAS */}
-              {focus === 'pend' && (pendingSales.length > 0 || pendingBankPropertyTransfers.length > 0 || bankerPendingPropertyTransfers.length > 0 || bankerPurchaseRequests.length > 0 || myPendingPurchaseRequests.length > 0) && (
+              {focus === 'pend' && (pendingSales.length > 0 || pendingBankPropertyTransfers.length > 0 || bankerPendingPropertyTransfers.length > 0 || bankerPurchaseRequests.length > 0 || myPendingPurchaseRequests.length > 0 || bankerConstructionRequests.length > 0 || myConstructionRequests.length > 0) && (
                 <div className="pendBox">
                   <div className="pendTop">
                     <div>
                       <div className="pendTitle">Pendências</div>
                       <div className="pendHint">
                         {role === 'bancario'
-                          ? 'Solicitações de compra e pagamentos pendentes dos jogadores.'
-                          : 'Solicitações enviadas, compras e transferências pendentes da sua conta.'}
+                          ? 'Solicitações de imóveis, casas/hotéis e pagamentos pendentes dos jogadores.'
+                          : 'Solicitações enviadas, construções, compras e transferências pendentes da sua conta.'}
                       </div>
                     </div>
                     {cancelablePendingCount > 0 && (
@@ -3594,6 +4096,63 @@ function matchesQuery(p: PropertyItem, q: string) {
                           <button className="miniBtn" onClick={() => cancelPurchaseRequest(req)}>
                             Cancelar
                           </button>
+                        </div>
+                      </div>
+                    ))}
+
+                    {role === 'bancario' && bankerConstructionRequests.map((req) => (
+                      <div key={`build-bank-${req.id}`} className="pendItem purchaseRequestItem">
+                        <div className="pendRow requestRow">
+                          <div className="pendMain">
+                            <div className="pendName">Construção • {req.propName}</div>
+                            <div className="pendSub">
+                              <b>{req.playerName}</b> • {constructionRequestLabel(req)} • {money(req.amount)}
+                              {req.status === 'approved' && (
+                                <> • {req.paymentMethod === 'pix' ? 'Pix aprovado' : req.paymentMethod === 'bank_transfer' ? 'Transferência aprovada' : 'Dinheiro aprovado'}</>
+                              )}
+                            </div>
+                          </div>
+                          <div className="pendActions">
+                            {req.status === 'requested' ? (
+                              <>
+                                <button className="miniBtn" onClick={() => approveConstructionRequest(req, 'pix')}>Pix</button>
+                                <button className="miniBtn" onClick={() => approveConstructionRequest(req, 'bank_transfer')}>Transf.</button>
+                                <button className="miniBtn" onClick={() => approveConstructionRequest(req, 'cash')}>Dinheiro</button>
+                              </>
+                            ) : req.paymentMethod === 'pix' ? (
+                              <button className="miniBtn" onClick={() => showConstructionQr(req)}>Mostrar QR</button>
+                            ) : req.paymentMethod === 'cash' ? (
+                              <button className="miniBtn" onClick={() => registerConstructionCash(req)}>Registrar dinheiro</button>
+                            ) : (
+                              <span className="pendNext">Aguardando jogador</span>
+                            )}
+                            <button className="miniBtn dangerMini" onClick={() => cancelConstructionRequest(req)}>Cancelar</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {role === 'jogador' && myConstructionRequests.map((req) => (
+                      <div key={`build-player-${req.id}`} className="pendItem purchaseRequestItem">
+                        <div className="pendRow requestRow">
+                          <div className="pendMain">
+                            <div className="pendName">{constructionRequestLabel(req)} • {req.propName}</div>
+                            <div className="pendSub">
+                              {money(req.amount)} • {req.status === 'requested'
+                                ? 'aguardando aprovação do Banco'
+                                : req.paymentMethod === 'pix'
+                                ? 'Pix aprovado • escaneie o QR do Banco'
+                                : req.paymentMethod === 'bank_transfer'
+                                ? 'Transferência aprovada'
+                                : 'Pague em dinheiro ao Banco'}
+                            </div>
+                          </div>
+                          <div className="pendActions">
+                            {req.status === 'approved' && req.paymentMethod === 'bank_transfer' && (
+                              <button className="miniBtn" onClick={() => payConstructionByBankTransfer(req)}>Pagar transferência</button>
+                            )}
+                            <button className="miniBtn dangerMini" onClick={() => cancelConstructionRequest(req)}>Cancelar</button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -4017,6 +4576,12 @@ function matchesQuery(p: PropertyItem, q: string) {
                           <b>Proprietário atual:</b> {ownerName}
                         </span>
                       </div>
+                      {p.kind === 'NORMAL' && sold && (
+                        <div className="pOwner center">
+                          <span>🏠</span>
+                          <span><b>Construções:</b> {p.hasHotel ? 'Hotel' : `${Number(p.houses || 0)} casa(s)`}</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="pBtnsOut">
@@ -4056,9 +4621,9 @@ function matchesQuery(p: PropertyItem, q: string) {
     className="pBtn"
     type="button"
     onClick={() => openRent(p.id)}
-    title="Cobrar aluguel, vender ou transferir esta propriedade"
+    title="Cobrar aluguel, solicitar casa/hotel, vender ou transferir esta propriedade"
   >
-    GERENCIAR
+    GERENCIAR / CONSTRUIR
   </button>
 ) : (
   <button
@@ -4617,6 +5182,39 @@ function matchesQuery(p: PropertyItem, q: string) {
         )}
       </Modal>
 
+      {/* ===== MODAL: PIX DE CONSTRUÇÃO ===== */}
+      <Modal
+        open={constructionQrOpen}
+        title="Pix da construção"
+        variant="compact"
+        onClose={() => {
+          setConstructionQrOpen(false);
+          setConstructionQrRequest(null);
+          setConstructionQrUrl('');
+          setConstructionCode('');
+        }}
+      >
+        {constructionQrRequest && (
+          <div className="compactPayCard">
+            <div className="sum">
+              <div className="li2"><span>Jogador</span><b>{constructionQrRequest.playerName}</b></div>
+              <div className="li2"><span>Propriedade</span><b>{constructionQrRequest.propName}</b></div>
+              <div className="li2"><span>Construção</span><b>{constructionRequestLabel(constructionQrRequest)}</b></div>
+              <div className="li2"><span>Valor</span><b>{money(constructionQrRequest.amount)}</b></div>
+            </div>
+            {constructionQrUrl && (
+              <div className="qrBox compactQrBox">
+                <img className="qrImg" src={constructionQrUrl} alt="QR Pix da construção" />
+                <div className="rowBtn">
+                  <button className="btn" type="button" onClick={() => copy(constructionCode)}>Copiar código</button>
+                </div>
+                <div className="mHint">O jogador escaneia este QR. Ao confirmar o Pix, a construção é aplicada automaticamente.</div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
       {/* ===== MODAL: CADEIA (bancário) ===== */}
       <Modal
         open={jailFlowOpen}
@@ -4720,6 +5318,26 @@ function matchesQuery(p: PropertyItem, q: string) {
           if (!prop) return <div className="empty">Propriedade não encontrada.</div>;
 
           const titleBase = `Aluguel • ${prop.name}`;
+          const activeBuildRequest = constructionRequestsArr.find(
+            (request) =>
+              (request.status === 'requested' || request.status === 'approved') &&
+              request.playerUid === uid &&
+              request.propId === prop.id
+          );
+          const nextBuild = prop.ownerUid === uid ? nextConstructionForProperty(prop) : null;
+          const currentHouseCount = Math.max(0, Number(prop.houses || 0));
+          const currentRentAmount = prop.kind === 'MULTIPLIER'
+            ? Math.max(0, Number(prop.multiplierValue || 0) * Math.max(0, Number(rentDiceSum || 0)))
+            : prop.hasHotel
+            ? Math.max(0, Number(prop.hotel || 0))
+            : currentHouseCount > 0
+            ? Math.max(0, Number(prop.rentByHouses?.[currentHouseCount] || 0))
+            : Math.max(0, Number(prop.baseRent || 0));
+          const currentRentLabel = prop.hasHotel
+            ? 'Hotel'
+            : currentHouseCount > 0
+            ? `${currentHouseCount} casa(s)`
+            : 'Sem casa';
           return (
             <>
               <div className="sum">
@@ -4732,6 +5350,34 @@ function matchesQuery(p: PropertyItem, q: string) {
                   <b>{prop.kind === 'MULTIPLIER' ? 'Multiplicador' : 'Normal'}</b>
                 </div>
               </div>
+
+              {prop.kind === 'NORMAL' && prop.ownerUid === uid && (
+                <div className="field">
+                  <div className="lab">Construções</div>
+                  <div className="sum">
+                    <div className="li2">
+                      <span>Situação atual</span>
+                      <b>{prop.hasHotel ? 'Hotel' : `${Number(prop.houses || 0)} casa(s)`}</b>
+                    </div>
+                    <div className="li2">
+                      <span>Próxima construção</span>
+                      <b>{nextBuild ? `${nextBuild.label} • ${money(nextBuild.amount)}` : 'Construção máxima'}</b>
+                    </div>
+                  </div>
+                  {activeBuildRequest ? (
+                    <button className="btn disabled" type="button" disabled>
+                      {activeBuildRequest.status === 'requested'
+                        ? `${constructionRequestLabel(activeBuildRequest)} solicitada • aguardando Banco`
+                        : `${constructionRequestLabel(activeBuildRequest)} aprovada • veja Pendências`}
+                    </button>
+                  ) : nextBuild ? (
+                    <button className="btn primary" type="button" onClick={() => requestConstruction(prop)}>
+                      Solicitar {nextBuild.label} ao Banco • {money(nextBuild.amount)}
+                    </button>
+                  ) : null}
+                  <div className="mHint">A casa/hotel só entra na propriedade depois que o Banco aprovar e o pagamento for concluído.</div>
+                </div>
+              )}
 
               <div className="field">
                 <div className="lab">Receber por</div>
@@ -4766,6 +5412,20 @@ function matchesQuery(p: PropertyItem, q: string) {
                   </select>
                   <div className="mHint">O valor será registrado no extrato, mas não altera o saldo digital.</div>
                 </div>
+              )}
+
+              {prop.kind === 'NORMAL' && (
+                <button
+                  className="btn primary"
+                  type="button"
+                  onClick={() => chargeRent(
+                    currentRentAmount,
+                    `${titleBase} • ${currentRentLabel}`,
+                    { type: 'RENT', propId: prop.id, tier: prop.hasHotel ? 'hotel' : String(currentHouseCount) }
+                  )}
+                >
+                  Cobrar aluguel atual • {currentRentLabel} • {money(currentRentAmount)}
+                </button>
               )}
 
               {prop.kind === 'MULTIPLIER' ? (
@@ -5956,6 +6616,16 @@ function matchesQuery(p: PropertyItem, q: string) {
   max-height: min(250px, 42vh);
   flex: 0 0 auto;
 }
+.compactQrBox{
+  padding: 8px;
+  gap: 8px;
+  align-content: start;
+}
+.compactQrBox .qrImg{
+  width: min(205px, 58vw);
+  max-height: min(205px, 34vh);
+  padding: 10px;
+}
         .rowBtn {
           display: flex;
           gap: 8px;
@@ -6360,6 +7030,22 @@ function matchesQuery(p: PropertyItem, q: string) {
                       <span className="k">Hotel</span>
                       <span className="v">{money(viewProp.hotel || 0)}</span>
                     </div>
+                    {viewProp.ownerUid !== BANK_UID && (
+                      <>
+                        <div className="rentLine">
+                          <span className="k">Construções atuais</span>
+                          <span className="v">{viewProp.hasHotel ? 'Hotel' : `${Number(viewProp.houses || 0)} casa(s)`}</span>
+                        </div>
+                        <div className="rentLine">
+                          <span className="k">Custo da próxima casa</span>
+                          <span className="v">{money(viewProp.houseCost || 0)}</span>
+                        </div>
+                        <div className="rentLine">
+                          <span className="k">Custo do hotel</span>
+                          <span className="v">{money(viewProp.hotelCost || 0)}</span>
+                        </div>
+                      </>
+                    )}
 
                     <div className="housesCard">
                       <div className="housesTitle">Aluguel com casas</div>
@@ -6429,7 +7115,7 @@ function matchesQuery(p: PropertyItem, q: string) {
                             openRent(viewProp.id);
                           }}
                         >
-                          Gerenciar
+                          Gerenciar / Construir
                         </button>
                       ) : viewProp.ownerUid === BANK_UID ? (
                         <button
