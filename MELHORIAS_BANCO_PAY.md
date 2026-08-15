@@ -55,3 +55,9 @@ O ambiente desta sessão não conseguiu concluir a instalação completa das dep
 npm install
 npm run build
 ```
+
+## Pagamento em dinheiro
+- Aluguel pode ser recebido por Pix ou dinheiro físico.
+- Ao receber em dinheiro, o proprietário escolhe quem pagou e a operação fica registrada no extrato sem alterar o saldo digital.
+- Compras de propriedades do Banco podem ser pagas por Pix ou dinheiro, inclusive com parcelas registradas individualmente.
+- Em vendas entre jogadores, o vendedor pode confirmar recebimento em dinheiro; o bancário recebe a confirmação para concluir a transferência da propriedade.

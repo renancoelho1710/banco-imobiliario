@@ -1,0 +1,16 @@
+ATUALIZAÇÃO: PAGAMENTO EM DINHEIRO
+
+1. Extraia este ZIP.
+2. Copie a pasta app e o arquivo MELHORIAS_BANCO_PAY.md para a raiz do seu projeto atual.
+3. Aceite substituir app/home/HomeClient.tsx.
+4. NÃO apague seu .env.local e NÃO copie node_modules.
+5. No terminal do projeto rode: npm run build
+6. Se passar: git add .
+7. git commit -m "Adiciona pagamento em dinheiro"
+8. git push origin main
+
+Incluído:
+- Aluguel: Pix ou dinheiro físico.
+- Compra do Banco: Pix ou dinheiro, à vista ou parcelas registradas individualmente.
+- Venda entre jogadores: Pix ou dinheiro com confirmação do bancário.
+- Dinheiro físico aparece no extrato e não altera o saldo digital.

@@ -99,6 +99,7 @@ type TransferDoc = {
   amount: number;
 
   status: TransferStatus;
+  paymentMethod?: 'pix' | 'cash';
 };
 
 type BankerNotification =
@@ -1040,12 +1041,14 @@ const [txErr, setTxErr] = useState('');
   const [sellPropId, setSellPropId] = useState('');
   const [sellToUid, setSellToUid] = useState('');
   const [sellMode, setSellMode] = useState<'avista' | 'parcelado'>('avista');
+  const [sellPaymentMethod, setSellPaymentMethod] = useState<'pix' | 'cash'>('pix');
   const [sellInstallments, setSellInstallments] = useState(2);
   const [sellQr, setSellQr] = useState<string>(''); // dataUrl
   const [sellCode, setSellCode] = useState<string>(''); // BI|...
 
   const [sellBusy, setSellBusy] = useState(false);
   const [sellErr, setSellErr] = useState('');
+  const [sellCashMsg, setSellCashMsg] = useState('');
   
   
   // popup bancário: venda paga -> transferir?
@@ -1067,6 +1070,9 @@ const [txErr, setTxErr] = useState('');
   const [rentOpen, setRentOpen] = useState(false);
   const [rentPropId, setRentPropId] = useState('');
   const [rentDiceSum, setRentDiceSum] = useState<number>(7);
+  const [rentPaymentMethod, setRentPaymentMethod] = useState<'pix' | 'cash'>('pix');
+  const [rentCashPayerUid, setRentCashPayerUid] = useState('');
+  const [rentCashMsg, setRentCashMsg] = useState('');
   const [rentQrUrl, setRentQrUrl] = useState('');
   const [rentCode, setRentCode] = useState('');
 
@@ -1074,6 +1080,8 @@ const [txErr, setTxErr] = useState('');
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferPropId, setTransferPropId] = useState('');
   const [transferToUid, setTransferToUid] = useState('');
+  const [transferPaymentMethod, setTransferPaymentMethod] = useState<'pix' | 'cash'>('pix');
+  const [transferCashMsg, setTransferCashMsg] = useState('');
   const [transferQrUrl, setTransferQrUrl] = useState('');
   const [transferCode, setTransferCode] = useState('');
 
@@ -1358,6 +1366,14 @@ useEffect(() => {
     setReceiveOpen(true);
   }
 
+  async function receiveNextInstallmentCash(sale: SaleDoc) {
+    try {
+      await registerCashSaleInstallment(sale);
+      playBeep('notif');
+    } catch (e: any) {
+      window.alert(e?.message || 'Não foi possível registrar a parcela em dinheiro.');
+    }
+  }
 
 
   const isBlocked = me?.status === 'preso';
@@ -1747,7 +1763,7 @@ function openOnlineTransfer() {
         toName: receiverName,
         kindPaid,
         kindReceived,
-        meta: { ...(payloadToPay.meta || {}), paymentId },
+        meta: { ...(payloadToPay.meta || {}), paymentId, paymentMethod: 'pix' },
       });
 
       setLastReceipt({
@@ -1781,9 +1797,11 @@ function openOnlineTransfer() {
   setSellPropId(propId);
   setSellToUid('');
   setSellMode('avista');
+  setSellPaymentMethod('pix');
   setSellInstallments(2);
   setSellQr('');
   setSellCode('');
+  setSellCashMsg('');
   setSellOpen(true);
 }
 
@@ -1823,10 +1841,20 @@ function openOnlineTransfer() {
         status: 'pending_payment',
       };
 
-      // tenta persistir (se falhar, ainda gera localmente)
-      try {
-        await set(ref(db, `${roomRefBase}/sales/${saleId}`), sale);
-      } catch {}
+      await set(ref(db, `${roomRefBase}/sales/${saleId}`), sale);
+
+      if (sellPaymentMethod === 'cash') {
+        await registerCashSaleInstallment(sale);
+        setSellQr('');
+        setSellCode('');
+        setSellCashMsg(
+          installments === 1
+            ? 'Pagamento em dinheiro registrado. Confirme a transferência da propriedade.'
+            : `1ª parcela em dinheiro registrada. Restam ${installments - 1} parcela(s).`
+        );
+        playBeep('notif');
+        return;
+      }
 
       const payload = generatePayload(
         BANK_UID,
@@ -1855,6 +1883,71 @@ function openOnlineTransfer() {
     }
   }
   
+
+
+  async function registerCashSaleInstallment(saleLike: SaleDoc) {
+    if (!room || role !== 'bancario') return;
+
+    const inst = Math.max(1, Number(saleLike.installments || 1));
+    const paidArr: boolean[] = Array.isArray(saleLike.paidInstallments)
+      ? saleLike.paidInstallments
+      : Array(inst).fill(false);
+    const nextIdx = paidArr.findIndex((v) => !v);
+    if (nextIdx < 0) return;
+
+    const amount = installmentAmount(Number(saleLike.total || 0), inst, nextIdx);
+    const installment = nextIdx + 1;
+    const buyer = room.players?.[saleLike.buyerUid];
+    if (!buyer) throw new Error('Comprador não encontrado.');
+
+    const result = await runTransaction(ref(db, `${roomRefBase}`), (state: any) => {
+      if (!state) return;
+      const sale = state.sales?.[saleLike.id];
+      if (!sale || sale.status !== 'pending_payment') return;
+      if (sale.buyerUid !== saleLike.buyerUid) return;
+
+      const buyerState = state.players?.[sale.buyerUid];
+      if (!buyerState || buyerState.status === 'falido' || buyerState.status === 'desistente') return;
+
+      sale.paidInstallments = Array.isArray(sale.paidInstallments)
+        ? sale.paidInstallments
+        : Array(sale.installments).fill(false);
+      if (sale.paidInstallments[nextIdx]) return;
+
+      sale.paidInstallments[nextIdx] = true;
+      sale.paidCount = sale.paidInstallments.filter(Boolean).length;
+
+      if (sale.paidCount >= sale.installments) {
+        sale.status = 'paid_full';
+        state.notifications = state.notifications || {};
+        state.notifications.banker = { type: 'SALE_PAID', saleId: sale.id, at: Date.now() };
+      }
+
+      state.sales[sale.id] = sale;
+      return state;
+    });
+
+    if (!result.committed) throw new Error('Essa parcela já foi registrada ou a venda não está mais disponível.');
+
+    await pushLedgerPair({
+      title: `${installment === inst && inst === 1 ? 'Compra' : `Parcela ${installment}/${inst}`} • ${saleLike.propName} • Dinheiro`,
+      amount,
+      fromUid: saleLike.buyerUid,
+      fromName: saleLike.buyerName,
+      toUid: BANK_UID,
+      toName: BANK_NAME,
+      kindPaid: 'compra',
+      kindReceived: 'venda',
+      meta: {
+        type: 'PROPERTY_PURCHASE',
+        paymentMethod: 'cash',
+        saleId: saleLike.id,
+        installment,
+        totalInstallments: inst,
+        propId: saleLike.propId,
+      },
+    });
+  }
 
   /* ============ NOTIFICAÇÕES DO BANCÁRIO ============ */
   useEffect(() => {
@@ -1962,6 +2055,9 @@ function openOnlineTransfer() {
   function openRent(propId: string) {
     setRentPropId(propId);
     setRentDiceSum(7);
+    setRentPaymentMethod('pix');
+    setRentCashPayerUid('');
+    setRentCashMsg('');
     setRentQrUrl('');
     setRentCode('');
     setRentOpen(true);
@@ -1975,10 +2071,49 @@ function openOnlineTransfer() {
     setRentQrUrl(await makeQrDataUrl(code));
   }
 
+  async function chargeRent(amount: number, title: string, meta: any) {
+    setRentCashMsg('');
+    setRentQrUrl('');
+    setRentCode('');
+    if (amount <= 0) return setRentCashMsg('Valor de aluguel inválido.');
+
+    if (rentPaymentMethod === 'pix') {
+      await generateRentQr(amount, title, meta);
+      return;
+    }
+
+    if (!room || !me) return;
+    const payer = room.players?.[rentCashPayerUid];
+    if (!payer) return setRentCashMsg('Selecione quem pagou em dinheiro.');
+    if (payer.uid === uid) return setRentCashMsg('O proprietário não pode pagar o próprio aluguel.');
+    if (payer.status === 'falido' || payer.status === 'desistente') return setRentCashMsg('Essa conta está encerrada.');
+
+    const ok = window.confirm(`Confirmar ${money(amount)} em dinheiro recebido de ${payer.name}?`);
+    if (!ok) return;
+
+    await pushLedgerPair({
+      title: `${title} • Dinheiro`,
+      amount,
+      fromUid: payer.uid,
+      fromName: payer.name,
+      toUid: uid,
+      toName: me.name,
+      kindPaid: 'aluguel',
+      kindReceived: 'aluguel',
+      meta: { ...meta, paymentMethod: 'cash' },
+    });
+
+    setRentCashPayerUid('');
+    setRentCashMsg(`Recebimento em dinheiro registrado: ${money(amount)}.`);
+    playBeep('notif');
+  }
+
   /* ============ TRANSFERIR/VENDER PROPRIEDADE (jogador) ============ */
   function openTransfer(propId: string) {
     setTransferPropId(propId);
     setTransferToUid('');
+    setTransferPaymentMethod('pix');
+    setTransferCashMsg('');
     setTransferQrUrl('');
     setTransferCode('');
     setTransferOpen(true);
@@ -2005,6 +2140,7 @@ function openOnlineTransfer() {
       toName: buyer.name,
       amount: prop.sellValue,
       status: 'pending_payment',
+      paymentMethod: 'pix',
     };
 
     await set(ref(db, `${roomRefBase}/transfers/${transferId}`), doc);
@@ -2021,6 +2157,57 @@ function openOnlineTransfer() {
     const code = makeCode(payload);
     setTransferCode(code);
     setTransferQrUrl(await makeQrDataUrl(code));
+  }
+
+
+  async function registerCashPropertyTransfer() {
+    if (!room || !me) return;
+    setTransferCashMsg('');
+    const prop = properties.find((p) => p.id === transferPropId);
+    const buyer = room.players?.[transferToUid];
+    if (!prop || !buyer) return setTransferCashMsg('Selecione o comprador.');
+    if (prop.ownerUid !== uid) return setTransferCashMsg('Você não é mais dono desta propriedade.');
+    if (buyer.status === 'falido' || buyer.status === 'desistente') return setTransferCashMsg('A conta do comprador está encerrada.');
+
+    const ok = window.confirm(`Confirmar que ${buyer.name} pagou ${money(prop.sellValue)} em dinheiro por ${prop.name}?`);
+    if (!ok) return;
+
+    const transferId = `tr-${idNow()}`;
+    const doc: TransferDoc = {
+      id: transferId,
+      at: Date.now(),
+      roomCode,
+      propId: prop.id,
+      propName: prop.name,
+      fromUid: uid,
+      fromName: me.name,
+      toUid: buyer.uid,
+      toName: buyer.name,
+      amount: prop.sellValue,
+      status: 'paid',
+      paymentMethod: 'cash',
+    };
+
+    await update(ref(db, `${roomRefBase}`), {
+      [`transfers/${transferId}`]: doc,
+      'notifications/banker': { type: 'TRANSFER_PAID', transferId, at: Date.now() },
+    });
+
+    await pushLedgerPair({
+      title: `Compra • ${prop.name} • Dinheiro`,
+      amount: prop.sellValue,
+      fromUid: buyer.uid,
+      fromName: buyer.name,
+      toUid: uid,
+      toName: me.name,
+      kindPaid: 'compra',
+      kindReceived: 'venda',
+      meta: { type: 'PROP_TRANSFER', transferId, propId: prop.id, paymentMethod: 'cash' },
+    });
+
+    setTransferCashMsg('Dinheiro registrado. O bancário recebeu a confirmação para transferir a propriedade.');
+    setTransferToUid('');
+    playBeep('notif');
   }
 
   async function bankerConfirmPlayerTransfer() {
@@ -2438,9 +2625,14 @@ function matchesQuery(p: PropertyItem, q: string) {
                             </div>
 
                             {role === 'bancario' && nextIdx >= 0 && (
-                              <button className="miniBtn" onClick={() => openNextInstallmentQr(s)}>
-                                Gerar QR
-                              </button>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                <button className="miniBtn" onClick={() => openNextInstallmentQr(s)}>
+                                  Pix
+                                </button>
+                                <button className="miniBtn" onClick={() => receiveNextInstallmentCash(s as SaleDoc)}>
+                                  Dinheiro
+                                </button>
+                              </div>
                             )}
                           </div>
 
@@ -2879,6 +3071,7 @@ function matchesQuery(p: PropertyItem, q: string) {
                   <div className="lSub">
                     {new Date(l.at).toLocaleString('pt-BR')}
                     {l.from && l.to ? ` • ${l.from} → ${l.to}` : ''}
+                    {l.meta?.meta?.paymentMethod === 'cash' ? ' • Dinheiro' : l.meta?.meta?.paymentMethod === 'pix' ? ' • Pix' : ''}
                   </div>
                 </div>
                 <div className={l.amount >= 0 ? 'lAmt pos' : 'lAmt neg'}>{money(l.amount)}</div>
@@ -3178,9 +3371,11 @@ function matchesQuery(p: PropertyItem, q: string) {
     setSellPropId('');
     setSellToUid('');
     setSellMode('avista');
+    setSellPaymentMethod('pix');
     setSellInstallments(2);
     setSellQr('');
     setSellCode('');
+    setSellCashMsg('');
   }}
 >
           {(() => {
@@ -3206,7 +3401,7 @@ function matchesQuery(p: PropertyItem, q: string) {
                 <select className="inp" value={sellToUid} onChange={(e) => setSellToUid(e.target.value)}>
                   <option value="">Selecione um jogador...</option>
                   {playersArr
-                    .filter((p) => p.uid !== bankerUid)
+                    .filter((p) => p.uid !== bankerUid && p.uid !== BANK_UID && p.status !== 'falido' && p.status !== 'desistente')
                     .map((p) => (
                       <option key={p.uid} value={p.uid}>
                         {p.name}
@@ -3216,7 +3411,28 @@ function matchesQuery(p: PropertyItem, q: string) {
               </div>
 
               <div className="field">
-                <div className="lab">Pagamento</div>
+                <div className="lab">Forma de pagamento</div>
+                <div className="seg2">
+                  <button
+                    className={sellPaymentMethod === 'pix' ? 'segBtn active' : 'segBtn'}
+                    onClick={() => { setSellPaymentMethod('pix'); setSellCashMsg(''); setSellQr(''); setSellCode(''); }}
+                    type="button"
+                  >
+                    Pix
+                  </button>
+                  <button
+                    className={sellPaymentMethod === 'cash' ? 'segBtn active' : 'segBtn'}
+                    onClick={() => { setSellPaymentMethod('cash'); setSellCashMsg(''); setSellQr(''); setSellCode(''); }}
+                    type="button"
+                  >
+                    Dinheiro
+                  </button>
+                </div>
+                <div className="mHint">Dinheiro físico não altera o saldo digital; apenas registra a operação na partida.</div>
+              </div>
+
+              <div className="field">
+                <div className="lab">Condição</div>
                 <div className="seg2">
                   <button className={sellMode === 'avista' ? 'segBtn active' : 'segBtn'} onClick={() => setSellMode('avista')} type="button">
                     À vista
@@ -3245,10 +3461,17 @@ function matchesQuery(p: PropertyItem, q: string) {
                 </div>
               )}
 
-              <button className="btn primary" onClick={generateSellQr}>
-  {sellMode === 'avista' ? 'Gerar QR à vista' : 'Gerar QR da 1ª parcela'}
-</button>
+              <button className="btn primary" onClick={generateSellQr} disabled={sellBusy || !sellToUid}>
+                {sellPaymentMethod === 'cash'
+                  ? sellMode === 'avista'
+                    ? 'Registrar pagamento em dinheiro'
+                    : 'Registrar 1ª parcela em dinheiro'
+                  : sellMode === 'avista'
+                  ? 'Gerar Pix à vista'
+                  : 'Gerar Pix da 1ª parcela'}
+              </button>
               {sellErr && <div className="err">{sellErr}</div>}
+              {sellCashMsg && <div className="mHint" style={{ marginTop: 8 }}><b>{sellCashMsg}</b></div>}
 
               {sellBusy && <div className="mHint">Gerando QR...</div>}
               
@@ -3435,6 +3658,9 @@ function matchesQuery(p: PropertyItem, q: string) {
         onClose={() => {
           setRentOpen(false);
           setRentPropId('');
+          setRentPaymentMethod('pix');
+          setRentCashPayerUid('');
+          setRentCashMsg('');
           setRentQrUrl('');
           setRentCode('');
         }}
@@ -3457,6 +3683,41 @@ function matchesQuery(p: PropertyItem, q: string) {
                 </div>
               </div>
 
+              <div className="field">
+                <div className="lab">Receber por</div>
+                <div className="seg2">
+                  <button
+                    className={rentPaymentMethod === 'pix' ? 'segBtn active' : 'segBtn'}
+                    type="button"
+                    onClick={() => { setRentPaymentMethod('pix'); setRentCashMsg(''); setRentCashPayerUid(''); }}
+                  >
+                    Pix
+                  </button>
+                  <button
+                    className={rentPaymentMethod === 'cash' ? 'segBtn active' : 'segBtn'}
+                    type="button"
+                    onClick={() => { setRentPaymentMethod('cash'); setRentCashMsg(''); setRentQrUrl(''); setRentCode(''); }}
+                  >
+                    Dinheiro
+                  </button>
+                </div>
+              </div>
+
+              {rentPaymentMethod === 'cash' && (
+                <div className="field">
+                  <div className="lab">Quem pagou em dinheiro?</div>
+                  <select className="inp" value={rentCashPayerUid} onChange={(e) => setRentCashPayerUid(e.target.value)}>
+                    <option value="">Selecione o jogador...</option>
+                    {playersArr
+                      .filter((p) => p.uid !== uid && p.uid !== BANK_UID && p.status !== 'falido' && p.status !== 'desistente')
+                      .map((p) => (
+                        <option key={p.uid} value={p.uid}>{p.name}</option>
+                      ))}
+                  </select>
+                  <div className="mHint">O valor será registrado no extrato, mas não altera o saldo digital.</div>
+                </div>
+              )}
+
               {prop.kind === 'MULTIPLIER' ? (
                 <>
                   <div className="field">
@@ -3468,31 +3729,31 @@ function matchesQuery(p: PropertyItem, q: string) {
                     className="btn primary"
                     onClick={() => {
                       const amt = Math.max(0, (prop.multiplierValue || 0) * Math.max(0, Number(rentDiceSum || 0)));
-                      generateRentQr(amt, `${titleBase} • Dados: ${rentDiceSum}`, { type: 'RENT', propId: prop.id, mode: 'MULTIPLIER', diceSum: rentDiceSum });
+                      chargeRent(amt, `${titleBase} • Dados: ${rentDiceSum}`, { type: 'RENT', propId: prop.id, mode: 'MULTIPLIER', diceSum: rentDiceSum });
                     }}
                   >
-                    Gerar QR (valor = {money((prop.multiplierValue || 0) * Math.max(0, Number(rentDiceSum || 0)))})
+                    {rentPaymentMethod === 'pix' ? 'Gerar Pix' : 'Registrar dinheiro'} (valor = {money((prop.multiplierValue || 0) * Math.max(0, Number(rentDiceSum || 0)))})
                   </button>
                 </>
               ) : (
                 <>
                   <div className="gridRent">
-                    <button className="btn" onClick={() => generateRentQr(prop.baseRent || 0, `${titleBase} • Sem casa`, { type: 'RENT', propId: prop.id, tier: 'base' })}>
+                    <button className="btn" onClick={() => chargeRent(prop.baseRent || 0, `${titleBase} • Sem casa`, { type: 'RENT', propId: prop.id, tier: 'base' })}>
                       Sem casa • {money(prop.baseRent || 0)}
                     </button>
-                    <button className="btn" onClick={() => generateRentQr(prop.rentByHouses?.[1] || 0, `${titleBase} • 1 casa`, { type: 'RENT', propId: prop.id, tier: '1' })}>
+                    <button className="btn" onClick={() => chargeRent(prop.rentByHouses?.[1] || 0, `${titleBase} • 1 casa`, { type: 'RENT', propId: prop.id, tier: '1' })}>
                       1 casa • {money(prop.rentByHouses?.[1] || 0)}
                     </button>
-                    <button className="btn" onClick={() => generateRentQr(prop.rentByHouses?.[2] || 0, `${titleBase} • 2 casas`, { type: 'RENT', propId: prop.id, tier: '2' })}>
+                    <button className="btn" onClick={() => chargeRent(prop.rentByHouses?.[2] || 0, `${titleBase} • 2 casas`, { type: 'RENT', propId: prop.id, tier: '2' })}>
                       2 casas • {money(prop.rentByHouses?.[2] || 0)}
                     </button>
-                    <button className="btn" onClick={() => generateRentQr(prop.rentByHouses?.[3] || 0, `${titleBase} • 3 casas`, { type: 'RENT', propId: prop.id, tier: '3' })}>
+                    <button className="btn" onClick={() => chargeRent(prop.rentByHouses?.[3] || 0, `${titleBase} • 3 casas`, { type: 'RENT', propId: prop.id, tier: '3' })}>
                       3 casas • {money(prop.rentByHouses?.[3] || 0)}
                     </button>
-                    <button className="btn" onClick={() => generateRentQr(prop.rentByHouses?.[4] || 0, `${titleBase} • 4 casas`, { type: 'RENT', propId: prop.id, tier: '4' })}>
+                    <button className="btn" onClick={() => chargeRent(prop.rentByHouses?.[4] || 0, `${titleBase} • 4 casas`, { type: 'RENT', propId: prop.id, tier: '4' })}>
                       4 casas • {money(prop.rentByHouses?.[4] || 0)}
                     </button>
-                    <button className="btn primary" onClick={() => generateRentQr(prop.hotel || 0, `${titleBase} • Hotel`, { type: 'RENT', propId: prop.id, tier: 'hotel' })}>
+                    <button className="btn primary" onClick={() => chargeRent(prop.hotel || 0, `${titleBase} • Hotel`, { type: 'RENT', propId: prop.id, tier: 'hotel' })}>
                       Hotel • {money(prop.hotel || 0)}
                     </button>
                   </div>
@@ -3507,7 +3768,7 @@ function matchesQuery(p: PropertyItem, q: string) {
         prop.kind === 'MULTIPLIER'
           ? (prop.multiplierValue || 0) * Math.max(0, Number(rentDiceSum || 0))
           : prop.baseRent || 0;
-      generateRentQr(amount, `${titleBase} • Cobrança rápida`, {
+      chargeRent(amount, `${titleBase} • Cobrança rápida`, {
         type: 'RENT',
         propId: prop.id,
         tier: prop.kind === 'MULTIPLIER' ? 'dice' : 'base',
@@ -3515,7 +3776,7 @@ function matchesQuery(p: PropertyItem, q: string) {
       });
     }}
   >
-    Gerar cobrança Pix
+    {rentPaymentMethod === 'pix' ? 'Gerar cobrança Pix' : 'Registrar aluguel em dinheiro'}
   </button>
 
   <button
@@ -3533,6 +3794,8 @@ function matchesQuery(p: PropertyItem, q: string) {
   </button>
 </div>
 
+
+              {rentCashMsg && <div className="mHint" style={{ marginTop: 8 }}><b>{rentCashMsg}</b></div>}
 
               {rentQrUrl && (
                 <div className="qrBox">
@@ -3559,6 +3822,8 @@ function matchesQuery(p: PropertyItem, q: string) {
           setTransferOpen(false);
           setTransferPropId('');
           setTransferToUid('');
+          setTransferPaymentMethod('pix');
+          setTransferCashMsg('');
           setTransferQrUrl('');
           setTransferCode('');
         }}
@@ -3586,7 +3851,7 @@ function matchesQuery(p: PropertyItem, q: string) {
                 <select className="inp" value={transferToUid} onChange={(e) => setTransferToUid(e.target.value)}>
                   <option value="">Selecione um jogador...</option>
                   {playersArr
-                    .filter((p) => p.uid !== uid)
+                    .filter((p) => p.uid !== uid && p.uid !== BANK_UID && p.status !== 'falido' && p.status !== 'desistente')
                     .map((p) => (
                       <option key={p.uid} value={p.uid}>
                         {p.name}
@@ -3595,9 +3860,38 @@ function matchesQuery(p: PropertyItem, q: string) {
                 </select>
               </div>
 
-              <button className="btn primary" onClick={generateTransferQr} disabled={!transferToUid}>
-                Gerar QR para o comprador pagar
-              </button>
+              <div className="field">
+                <div className="lab">Forma de pagamento</div>
+                <div className="seg2">
+                  <button
+                    className={transferPaymentMethod === 'pix' ? 'segBtn active' : 'segBtn'}
+                    type="button"
+                    onClick={() => { setTransferPaymentMethod('pix'); setTransferCashMsg(''); }}
+                  >
+                    Pix
+                  </button>
+                  <button
+                    className={transferPaymentMethod === 'cash' ? 'segBtn active' : 'segBtn'}
+                    type="button"
+                    onClick={() => { setTransferPaymentMethod('cash'); setTransferCashMsg(''); setTransferQrUrl(''); setTransferCode(''); }}
+                  >
+                    Dinheiro
+                  </button>
+                </div>
+                <div className="mHint">Dinheiro físico não altera o saldo digital.</div>
+              </div>
+
+              {transferPaymentMethod === 'pix' ? (
+                <button className="btn primary" onClick={generateTransferQr} disabled={!transferToUid}>
+                  Gerar Pix para o comprador pagar
+                </button>
+              ) : (
+                <button className="btn primary" onClick={registerCashPropertyTransfer} disabled={!transferToUid}>
+                  Confirmar recebimento em dinheiro
+                </button>
+              )}
+
+              {transferCashMsg && <div className="mHint" style={{ marginTop: 8 }}><b>{transferCashMsg}</b></div>}
 
               {transferQrUrl && (
                 <div className="qrBox">
