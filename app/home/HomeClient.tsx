@@ -5426,43 +5426,35 @@ function matchesQuery(p: PropertyItem, q: string) {
             : 'Sem casa';
           return (
             <>
-              <div className="sum">
-                <div className="li2">
-                  <span>Propriedade</span>
-                  <b style={{ color: '#111' }}>{prop.name}</b>
+              <div className="rentHero">
+                <div>
+                  <div className="rentHeroLabel">Propriedade</div>
+                  <b>{prop.name}</b>
                 </div>
-                <div className="li2">
-                  <span>Tipo</span>
-                  <b>{prop.kind === 'MULTIPLIER' ? 'Multiplicador' : 'Normal'}</b>
-                </div>
+                <span className="rentHeroPill">{prop.kind === 'MULTIPLIER' ? 'Dados' : currentRentLabel}</span>
               </div>
 
               {prop.kind === 'NORMAL' && prop.ownerUid === uid && (
-                <div className="field">
-                  <div className="lab">Construções</div>
-                  <div className="sum">
+                <details className="rentDisclosure">
+                  <summary>Construções <span>{prop.hasHotel ? 'Hotel' : `${Number(prop.houses || 0)} casa(s)`}</span></summary>
+                  <div className="rentDisclosureBody">
                     <div className="li2">
-                      <span>Situação atual</span>
-                      <b>{prop.hasHotel ? 'Hotel' : `${Number(prop.houses || 0)} casa(s)`}</b>
+                      <span>Próxima</span>
+                      <b>{nextBuild ? `${nextBuild.label} • ${money(nextBuild.amount)}` : 'Máximo atingido'}</b>
                     </div>
-                    <div className="li2">
-                      <span>Próxima construção</span>
-                      <b>{nextBuild ? `${nextBuild.label} • ${money(nextBuild.amount)}` : 'Construção máxima'}</b>
-                    </div>
+                    {activeBuildRequest ? (
+                      <button className="btn disabled" type="button" disabled>
+                        {activeBuildRequest.status === 'requested'
+                          ? `${constructionRequestLabel(activeBuildRequest)} • aguardando Banco`
+                          : `${constructionRequestLabel(activeBuildRequest)} aprovada • Pendências`}
+                      </button>
+                    ) : nextBuild ? (
+                      <button className="btn primary" type="button" onClick={() => requestConstruction(prop)}>
+                        Solicitar {nextBuild.label} • {money(nextBuild.amount)}
+                      </button>
+                    ) : null}
                   </div>
-                  {activeBuildRequest ? (
-                    <button className="btn disabled" type="button" disabled>
-                      {activeBuildRequest.status === 'requested'
-                        ? `${constructionRequestLabel(activeBuildRequest)} solicitada • aguardando Banco`
-                        : `${constructionRequestLabel(activeBuildRequest)} aprovada • veja Pendências`}
-                    </button>
-                  ) : nextBuild ? (
-                    <button className="btn primary" type="button" onClick={() => requestConstruction(prop)}>
-                      Solicitar {nextBuild.label} ao Banco • {money(nextBuild.amount)}
-                    </button>
-                  ) : null}
-                  <div className="mHint">A casa/hotel só entra na propriedade depois que o Banco aprovar e o pagamento for concluído.</div>
-                </div>
+                </details>
               )}
 
               <div className="field">
@@ -5510,7 +5502,7 @@ function matchesQuery(p: PropertyItem, q: string) {
                     { type: 'RENT', propId: prop.id, tier: prop.hasHotel ? 'hotel' : String(currentHouseCount) }
                   )}
                 >
-                  Cobrar aluguel atual • {currentRentLabel} • {money(currentRentAmount)}
+                  {rentPaymentMethod === 'pix' ? 'Cobrar' : 'Registrar'} {money(currentRentAmount)} • {currentRentLabel}
                 </button>
               )}
 
@@ -5548,7 +5540,8 @@ function matchesQuery(p: PropertyItem, q: string) {
                   </button>
                 </div>
               ) : (
-                <>
+                <details className="rentDisclosure rentOtherValues">
+                  <summary>Outros valores de aluguel <span>ver tabela</span></summary>
                   <div className="gridRent">
                     <button className="btn" onClick={() => chargeRent(prop.baseRent || 0, `${titleBase} • Sem casa`, { type: 'RENT', propId: prop.id, tier: 'base' })}>
                       Sem casa • {money(prop.baseRent || 0)}
@@ -5569,30 +5562,13 @@ function matchesQuery(p: PropertyItem, q: string) {
                       Hotel • {money(prop.hotel || 0)}
                     </button>
                   </div>
-                </>
+                </details>
               )}
 
-              <div className={prop.kind === 'MULTIPLIER' ? 'row2 compactActions' : 'row2'}>
-                {prop.kind !== 'MULTIPLIER' && (
-                  <button
-                    className="btn primary"
-                    onClick={() => {
-                      const amount = prop.baseRent || 0;
-                      chargeRent(amount, `${titleBase} • Cobrança rápida`, {
-                        type: 'RENT',
-                        propId: prop.id,
-                        tier: 'base',
-                      });
-                    }}
-                  >
-                    {rentPaymentMethod === 'pix' ? 'Gerar cobrança Pix' : 'Registrar aluguel em dinheiro'}
-                  </button>
-                )}
-
+              <div className="rentFooterActions">
                 <button className="btn" onClick={() => openTransfer(prop.id)}>
-                  Vender / Transferir ({money(prop.sellValue)})
+                  Vender / Transferir
                 </button>
-
                 <button className="btn" onClick={() => setRentOpen(false)}>
                   Fechar
                 </button>
@@ -6749,6 +6725,96 @@ function matchesQuery(p: PropertyItem, q: string) {
           display: grid;
           grid-template-columns: 1fr;
           gap: 8px;
+        }
+
+        /* Modal de aluguel: mostra só o essencial e expande detalhes sob demanda. */
+        .rentHero {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 9px 10px;
+          border-radius: 14px;
+          background: #f2f2f7;
+          color: #111;
+        }
+        .rentHero > div { min-width: 0; }
+        .rentHero b {
+          display: block;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 14px;
+          color: #111;
+        }
+        .rentHeroLabel {
+          font-size: 10px;
+          font-weight: 900;
+          color: #666;
+          text-transform: uppercase;
+          letter-spacing: .35px;
+          margin-bottom: 2px;
+        }
+        .rentHeroPill {
+          flex: 0 0 auto;
+          padding: 6px 9px;
+          border-radius: 999px;
+          background: #e4efeb;
+          color: #08483b;
+          font-size: 11px;
+          font-weight: 1000;
+        }
+        .rentDisclosure {
+          border: 1px solid #e5e7eb;
+          border-radius: 13px;
+          background: #fff;
+          color: #111;
+          overflow: hidden;
+        }
+        .rentDisclosure summary {
+          list-style: none;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 9px 10px;
+          font-size: 12px;
+          font-weight: 1000;
+          color: #111;
+        }
+        .rentDisclosure summary::-webkit-details-marker { display: none; }
+        .rentDisclosure summary::after {
+          content: '⌄';
+          color: #64748b;
+          font-size: 14px;
+          line-height: 1;
+        }
+        .rentDisclosure[open] summary::after { content: '⌃'; }
+        .rentDisclosure summary span {
+          margin-left: auto;
+          color: #64748b;
+          font-size: 11px;
+          font-weight: 900;
+        }
+        .rentDisclosureBody,
+        .rentOtherValues .gridRent {
+          display: grid;
+          gap: 7px;
+          padding: 0 9px 9px;
+        }
+        .rentOtherValues .btn {
+          padding: 9px 10px;
+          font-size: 12px;
+        }
+        .rentFooterActions {
+          display: grid;
+          grid-template-columns: 1fr 82px;
+          gap: 8px;
+        }
+        .rentFooterActions .btn {
+          padding: 9px 10px;
+          font-size: 12px;
         }
 
         /* Aluguel por soma dos dados: card curto e fácil de usar no celular. */
