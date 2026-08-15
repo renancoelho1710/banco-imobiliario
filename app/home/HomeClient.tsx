@@ -5671,7 +5671,7 @@ function matchesQuery(p: PropertyItem, q: string) {
       <Modal
         open={rentOpen}
         title="Receber aluguel"
-        variant={rentQrUrl ? 'scroll' : 'compact'}
+        variant="compact"
         onClose={() => {
           setRentOpen(false);
           setRentPropId('');
@@ -5685,6 +5685,39 @@ function matchesQuery(p: PropertyItem, q: string) {
         {(() => {
           const prop = properties.find((p) => p.id === rentPropId);
           if (!prop) return <div className="empty">Propriedade não encontrada.</div>;
+
+          // Quando o Pix já foi gerado, troca o formulário inteiro por uma tela
+          // compacta. Assim o QR e os botões nunca ficam cortados no celular.
+          if (rentQrUrl) {
+            const rentPayload = parseCode(rentCode);
+            const pixAmount = Math.max(0, Number(rentPayload?.amount || 0));
+            return (
+              <div className="rentPixCompact">
+                <div className="rentPixBadge">Cobrança Pix pronta</div>
+                <div className="rentPixProperty">{prop.name}</div>
+                <div className="rentPixAmount">{money(pixAmount)}</div>
+
+                <div className="qrBox compactQrBox rentPixQrBox">
+                  <img className="qrImg" src={rentQrUrl} alt="QR Pix do aluguel" />
+                </div>
+
+                <button className="btn primary rentPixCopy" type="button" onClick={() => copy(rentCode)}>
+                  Copiar código Pix
+                </button>
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => {
+                    setRentQrUrl('');
+                    setRentCode('');
+                  }}
+                >
+                  Voltar
+                </button>
+                <div className="mHint rentPixHint">O outro jogador lê o QR ou usa o botão de copiar.</div>
+              </div>
+            );
+          }
 
           const titleBase = `Aluguel • ${prop.name}`;
           const activeBuildRequest = constructionRequestsArr.find(
@@ -5860,18 +5893,6 @@ function matchesQuery(p: PropertyItem, q: string) {
 
               {rentCashMsg && <div className="mHint" style={{ marginTop: 8 }}><b>{rentCashMsg}</b></div>}
 
-              {rentQrUrl && (
-                <div className="qrBox">
-                  <img className="qrImg" src={rentQrUrl} alt="QR aluguel" />
-                  <div className="rowBtn">
-                    <button className="btn" onClick={() => copy(rentCode)}>
-                      Copiar (fallback)
-                    </button>
-                  </div>
-                  <div className="qrCode">{rentCode}</div>
-                  <div className="mHint">O outro jogador paga em “Pagar” e confirma com senha.</div>
-                </div>
-              )}
             </>
           );
         })()}
@@ -7490,7 +7511,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 .pMiniCard{min-height:0!important;background:#fff!important;border:1px solid #e3e9f2!important;border-radius:19px!important;box-shadow:0 8px 22px rgba(19,49,92,.06)!important;overflow:hidden!important}
 .pMiniTop{padding:16px 16px 10px!important;font-size:18px!important;text-align:left!important;letter-spacing:-.25px!important;color:#101828!important;background:#fff!important}
 .ribbon{position:static!important;margin:12px 14px 0!important;height:30px!important;width:fit-content!important;max-width:calc(100% - 28px)!important;border-radius:9px!important;box-shadow:none!important;padding:0 10px!important;justify-content:flex-start!important}.ribbon.ok{background:#e9f8ef!important;color:#18794e!important}.ribbon.bad{background:#fff0f0!important;color:#b42318!important}.ribbonText{font-size:10px!important}
-.pBand{margin:0!important;padding:10px 16px 14px!important;box-shadow:none!important;background:transparent!important}.pBandName{font-size:12px!important;text-align:left!important;color:#667085!important}.pBandRow{color:#0a5cff!important;font-size:13px!important}
+.pBand{margin:0!important;padding:14px 16px 15px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 8px 18px rgba(16,24,40,.10)!important}.pBandName{font-size:15px!important;text-align:left!important;color:#fff!important;text-shadow:0 1px 2px rgba(0,0,0,.22)}.pBandRow{color:#fff!important;font-size:12px!important;opacity:.98;text-shadow:0 1px 2px rgba(0,0,0,.18)}
 .pOwner{padding:10px 16px!important;font-size:11px!important;color:#667085!important;border-top:1px solid #eef2f6!important}
 .pBtnsOut{padding:0 14px 14px!important;gap:8px!important}.pBtn{height:40px!important;min-width:0!important;max-width:none!important;width:100%!important;border-radius:12px!important;background:#0a5cff!important;font-size:11px!important;font-weight:800!important;box-shadow:0 7px 14px rgba(10,92,255,.14)!important}.pBtn.ghost{background:#edf4ff!important;color:#0a5cff!important;border:1px solid #d9e7ff!important;box-shadow:none!important}
 .pBackCard{min-height:0!important;background:#fff!important;border:1px solid #e4eaf2!important;border-radius:18px!important;box-shadow:none!important}.pBackTop{padding:13px 14px!important}.pBackName{font-size:17px!important}.pBackBody{padding:10px!important;gap:7px!important}.rentLine{padding:9px 10px!important;border-radius:11px!important;border-color:#e7ebf1!important;background:#f9fafc!important}.housesCard{border-radius:13px!important}
@@ -7509,6 +7530,97 @@ function matchesQuery(p: PropertyItem, q: string) {
   .header{padding:18px 16px 30px!important;border-radius:0 0 28px 28px!important}.hello{font-size:22px!important}.page{padding:16px 10px 28px!important}.card{padding:14px!important;border-radius:20px!important}#conta.card{margin-top:-30px}.actions{grid-template-columns:repeat(3,1fr)!important;gap:7px!important}.act{min-height:82px!important}.propGrid{grid-template-columns:1fr!important}.propFilters{grid-template-columns:1fr!important}.balance{font-size:30px!important}.adminRow{align-items:flex-start!important;flex-direction:column!important}.adminBtns{width:100%!important;justify-content:flex-start!important}
 }
 @media(max-width:420px){.actions{grid-template-columns:repeat(2,1fr)!important}.act{min-height:76px!important}.iconsRow{gap:6px!important}.iconBtn{padding:0 9px!important}.gameOnly{display:none!important}}
+
+/* ===== Correção: cores das propriedades + Pix de aluguel compacto ===== */
+.pMiniCard .pBand{
+  min-height:76px!important;
+  display:grid!important;
+  align-content:center!important;
+  gap:8px!important;
+}
+.pMiniCard .pBandName,
+.pMiniCard .pBandRow,
+.pMiniCard .pBandRow span{
+  color:#fff!important;
+}
+
+.rentPixCompact{
+  display:grid;
+  justify-items:center;
+  gap:10px;
+  width:100%;
+  padding:2px 0 4px;
+  color:#101828;
+}
+.rentPixBadge{
+  background:#eaf2ff;
+  color:#0a5cff;
+  border:1px solid #d7e6ff;
+  border-radius:999px;
+  padding:6px 10px;
+  font-size:11px;
+  font-weight:850;
+}
+.rentPixProperty{
+  max-width:100%;
+  color:#475467;
+  font-size:12px;
+  font-weight:750;
+  text-align:center;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.rentPixAmount{
+  color:#071b3a;
+  font-size:26px;
+  line-height:1;
+  letter-spacing:-.8px;
+  font-weight:850;
+}
+.rentPixQrBox{
+  padding:8px!important;
+  margin:0!important;
+  width:auto!important;
+  max-width:100%!important;
+  box-shadow:none!important;
+}
+.rentPixQrBox .qrImg{
+  width:min(205px,56vw)!important;
+  max-width:205px!important;
+  max-height:min(205px,31dvh)!important;
+  padding:9px!important;
+}
+.rentPixCopy{width:100%;}
+.rentPixHint{text-align:center;max-width:330px;font-size:11px!important;line-height:1.35;}
+
+.mBody{
+  min-height:0!important;
+  overflow-y:auto!important;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+}
+@media(max-width:560px){
+  .mOverlay{
+    align-items:flex-start!important;
+    overflow-y:auto!important;
+    padding:max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom))!important;
+  }
+  .mCard,
+  .mCard.mCompact,
+  .mCard.mFit{
+    margin:auto!important;
+    max-height:calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom))!important;
+  }
+  .mCard.mCompact .mBody{
+    max-height:calc(100dvh - 92px - env(safe-area-inset-top) - env(safe-area-inset-bottom))!important;
+  }
+  .rentPixQrBox .qrImg{
+    width:min(190px,54vw)!important;
+    max-height:min(190px,29dvh)!important;
+  }
+  .rentPixAmount{font-size:24px;}
+}
 
 /* ===== NOTIFICAÇÕES (Modal) ===== */
 .notiList{
