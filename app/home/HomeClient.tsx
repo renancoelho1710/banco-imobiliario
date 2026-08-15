@@ -306,71 +306,152 @@ function applyConstructionRequestInState(state: any, request: any) {
 type BankSound = 'pix' | 'transfer' | 'request' | 'success' | 'warn';
 
 let bankAudioContext: any = null;
+let bankMasterGain: any = null;
+let bankCompressor: any = null;
+let bankAudioUnlocked = false;
 
 function getBankAudioContext() {
   if (typeof window === 'undefined') return null;
   try {
     const Ctx: any = (window as any).AudioContext || (window as any).webkitAudioContext;
     if (!Ctx) return null;
-    if (!bankAudioContext) bankAudioContext = new Ctx();
+    if (!bankAudioContext || bankAudioContext.state === 'closed') {
+      bankAudioContext = new Ctx();
+      bankMasterGain = null;
+      bankCompressor = null;
+      bankAudioUnlocked = false;
+    }
     return bankAudioContext;
   } catch {
     return null;
   }
 }
 
-async function unlockBankAudio() {
-  const ctx = getBankAudioContext();
-  if (!ctx) return;
+function getBankAudioOutput(ctx: any) {
+  if (!ctx) return null;
   try {
-    if (ctx.state === 'suspended') await ctx.resume();
-  } catch {}
+    if (!bankCompressor) {
+      bankCompressor = ctx.createDynamicsCompressor();
+      bankCompressor.threshold.setValueAtTime(-18, ctx.currentTime);
+      bankCompressor.knee.setValueAtTime(18, ctx.currentTime);
+      bankCompressor.ratio.setValueAtTime(4, ctx.currentTime);
+      bankCompressor.attack.setValueAtTime(0.002, ctx.currentTime);
+      bankCompressor.release.setValueAtTime(0.12, ctx.currentTime);
+    }
+    if (!bankMasterGain) {
+      bankMasterGain = ctx.createGain();
+      // Ganho interno 8x (800%). O compressor segura picos; o limite físico ainda é o volume máximo do celular.
+      bankMasterGain.gain.setValueAtTime(8.0, ctx.currentTime);
+      bankMasterGain.connect(bankCompressor);
+      bankCompressor.connect(ctx.destination);
+    }
+    return bankMasterGain;
+  } catch {
+    return ctx.destination;
+  }
 }
 
-function playBankSound(kind: BankSound = 'success') {
+async function unlockBankAudio() {
+  const ctx = getBankAudioContext();
+  if (!ctx) return false;
+  try {
+    if (ctx.state !== 'running') await ctx.resume();
+    if (ctx.state !== 'running') return false;
+
+    // iOS/Safari costuma exigir que ao menos um source seja iniciado durante gesto do usuário.
+    if (!bankAudioUnlocked) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.000001, ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(getBankAudioOutput(ctx));
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.015);
+      bankAudioUnlocked = true;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function playBankSound(kind: BankSound = 'success') {
   try {
     const ctx = getBankAudioContext();
     if (!ctx) return;
-    if (ctx.state === 'suspended') void ctx.resume();
+
+    // Não agenda o som enquanto o contexto ainda está suspenso.
+    const ready = await unlockBankAudio();
+    if (!ready || ctx.state !== 'running') return;
+
+    const output = getBankAudioOutput(ctx);
+    if (!output) return;
 
     const patterns: Record<BankSound, Array<[number, number, number]>> = {
-      pix: [[740, 0.00, 0.075], [980, 0.09, 0.09], [1240, 0.19, 0.12]],
-      transfer: [[520, 0.00, 0.08], [660, 0.10, 0.08], [820, 0.20, 0.11]],
-      request: [[880, 0.00, 0.07], [880, 0.12, 0.07]],
-      success: [[660, 0.00, 0.08], [880, 0.10, 0.11]],
-      warn: [[420, 0.00, 0.10], [350, 0.13, 0.13]],
+      pix: [
+        [720, 0.00, 0.11],
+        [960, 0.12, 0.13],
+        [1280, 0.27, 0.20],
+      ],
+      transfer: [
+        [500, 0.00, 0.12],
+        [680, 0.13, 0.13],
+        [900, 0.28, 0.20],
+      ],
+      // Alerta deliberadamente forte e longo para ser ouvido no meio da partida.
+      request: [
+        [880, 0.00, 0.17],
+        [1175, 0.19, 0.17],
+        [880, 0.40, 0.17],
+        [1175, 0.59, 0.24],
+      ],
+      success: [[660, 0.00, 0.12], [880, 0.14, 0.18]],
+      warn: [[440, 0.00, 0.16], [330, 0.18, 0.22]],
     };
 
     const peakGain: Record<BankSound, number> = {
-      pix: 0.12,
-      transfer: 0.14,
-      // Solicitação/cobrança nova precisa chamar atenção mesmo em ambiente de jogo.
-      // O volume final ainda respeita o volume físico do celular.
-      request: 0.72,
-      success: 0.11,
-      warn: 0.18,
+      pix: 0.34,
+      transfer: 0.38,
+      request: 0.95,
+      success: 0.30,
+      warn: 0.42,
     };
 
+    const baseTime = ctx.currentTime + 0.025;
     patterns[kind].forEach(([frequency, delay, duration]) => {
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const start = ctx.currentTime + delay;
-      const end = start + duration;
-      oscillator.type = kind === 'request' ? 'triangle' : 'sine';
-      oscillator.frequency.setValueAtTime(frequency, start);
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(peakGain[kind], start + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, end);
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start(start);
-      oscillator.stop(end + 0.02);
+      // Duas camadas por nota dão mais presença em alto-falante pequeno de celular.
+      const voices = kind === 'request'
+        ? [[frequency, 1], [frequency * 2, 0.28]]
+        : [[frequency, 1], [frequency * 1.5, 0.16]];
+
+      voices.forEach(([voiceFrequency, strength]) => {
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const start = baseTime + delay;
+        const end = start + duration;
+        oscillator.type = kind === 'request' ? 'square' : kind === 'warn' ? 'sawtooth' : 'sine';
+        oscillator.frequency.setValueAtTime(voiceFrequency, start);
+        const voicePeak = Math.max(0.0001, peakGain[kind] * strength);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(voicePeak, start + 0.012);
+        gain.gain.setValueAtTime(voicePeak, Math.max(start + 0.013, end - 0.045));
+        gain.gain.exponentialRampToValueAtTime(0.0001, end);
+        oscillator.connect(gain);
+        gain.connect(output);
+        oscillator.start(start);
+        oscillator.stop(end + 0.03);
+      });
     });
+
+    // Reforço tátil para solicitações/cobranças. Não substitui o som.
+    if (kind === 'request' && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate([180, 80, 180, 80, 260]);
+    }
   } catch {}
 }
 
 function playBeep(kind: 'notif' | 'warn' = 'notif') {
-  playBankSound(kind === 'warn' ? 'warn' : 'success');
+  void playBankSound(kind === 'warn' ? 'warn' : 'success');
 }
 
 function makeCode(payload: QrPayload) {
@@ -1372,11 +1453,15 @@ const [gameEndedData, setGameEndedData] = useState<any>(null);
 
 useEffect(() => {
   const unlock = () => { void unlockBankAudio(); };
-  window.addEventListener('pointerdown', unlock, { passive: true });
-  window.addEventListener('touchstart', unlock, { passive: true });
+  window.addEventListener('pointerdown', unlock, { passive: true, capture: true });
+  window.addEventListener('touchstart', unlock, { passive: true, capture: true });
+  window.addEventListener('click', unlock, { capture: true });
+  window.addEventListener('keydown', unlock, { capture: true });
   return () => {
-    window.removeEventListener('pointerdown', unlock);
-    window.removeEventListener('touchstart', unlock);
+    window.removeEventListener('pointerdown', unlock, true);
+    window.removeEventListener('touchstart', unlock, true);
+    window.removeEventListener('click', unlock, true);
+    window.removeEventListener('keydown', unlock, true);
   };
 }, []);
 
@@ -1783,7 +1868,7 @@ useEffect(() => {
     }
     const incoming = bankerPurchaseRequests.filter((request) => !previous.has(request.id));
     if (incoming.length > 0) {
-      playBankSound('request');
+      void playBankSound('request');
       setNotifUnread((count) => count + incoming.length);
       setNotifs((current) => [
         ...incoming.map((request): NotifItem => ({
@@ -1813,7 +1898,7 @@ useEffect(() => {
     }
     const incoming = requested.filter((request) => !previous.has(request.id));
     if (incoming.length > 0) {
-      playBankSound('request');
+      void playBankSound('request');
       setNotifUnread((count) => count + incoming.length);
       setNotifs((current) => [
         ...incoming.map((request): NotifItem => ({
@@ -1843,7 +1928,7 @@ useEffect(() => {
     }
     const incoming = approved.filter((request) => !previous.has(`${request.id}:${request.paymentMethod || ''}`));
     if (incoming.length > 0) {
-      playBankSound('request');
+      void playBankSound('request');
       setNotifUnread((count) => count + incoming.length);
       setNotifs((current) => [
         ...incoming.map((request): NotifItem => ({
@@ -1891,7 +1976,7 @@ useEffect(() => {
     }
     const incoming = chargeItems.filter((item) => !previous.has(item.id));
     if (incoming.length > 0) {
-      playBankSound('request');
+      void playBankSound('request');
       setNotifUnread((count) => count + incoming.length);
       setNotifs((current) => [
         ...incoming.map((item): NotifItem => ({
@@ -2019,7 +2104,7 @@ useEffect(() => {
       method: 'bank_transfer',
     });
     setReceiptOpen(true);
-    playBankSound('transfer');
+    void playBankSound('transfer');
   }
 
   async function payPropertyByBankTransfer(trLike: TransferDoc) {
@@ -2089,7 +2174,7 @@ useEffect(() => {
       method: 'bank_transfer',
     });
     setReceiptOpen(true);
-    playBankSound('transfer');
+    void playBankSound('transfer');
   }
 
   async function openNextInstallmentQr(sale: any) {
@@ -2569,7 +2654,7 @@ function openOnlineTransfer() {
         method: 'pix',
       });
       setReceiptOpen(true);
-      playBankSound('pix');
+      void playBankSound('pix');
       setPayloadToPay(null);
       setConfirmOpen(false);
       setPayOpen(false);
@@ -2647,7 +2732,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
     }
 
     setFocus('pend');
-    playBankSound('success');
+    void playBankSound('success');
     window.alert('Solicitação enviada ao Banco. Ela aparecerá nas Pendências do bancário.');
   }
 
@@ -2787,7 +2872,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
 
     setRentOpen(false);
     setFocus('pend');
-    playBankSound('success');
+    void playBankSound('success');
   }
 
   function constructionPayload(request: ConstructionRequestDoc): QrPayload | null {
@@ -2869,7 +2954,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
     if (method === 'pix') {
       await showConstructionQr(approved);
     } else {
-      playBankSound('success');
+      void playBankSound('success');
     }
   }
 
@@ -2921,7 +3006,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
 
     setLastReceipt({ id: `construction-transfer-${request.id}-${Date.now()}`, at: Date.now(), title, amount, fromName: me.name, toName: BANK_NAME, method: 'bank_transfer' });
     setReceiptOpen(true);
-    playBankSound('transfer');
+    void playBankSound('transfer');
   }
 
   async function registerConstructionCash(request: ConstructionRequestDoc) {
@@ -2954,7 +3039,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
       kindReceived: 'venda',
       meta: { type: 'CONSTRUCTION', paymentMethod: 'cash', requestId: request.id, propId: request.propId },
     });
-    playBankSound('success');
+    void playBankSound('success');
     window.alert(`${constructionRequestLabel(request)} adicionada em ${request.propName}.`);
   }
 
@@ -3112,7 +3197,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
     });
 
     if (result.committed) {
-      playBankSound('success');
+      void playBankSound('success');
     }
   }
 
@@ -3375,7 +3460,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
           if (sale && (sale.status === 'paid_full' || sale.status === 'transferred')) {
             setPendingTransferSale(sale);
             setPaidPopupOpen(true);
-            playBankSound(sale.paymentMethod === 'bank_transfer' ? 'transfer' : sale.paymentMethod === 'pix' ? 'pix' : 'success');
+            void playBankSound(sale.paymentMethod === 'bank_transfer' ? 'transfer' : sale.paymentMethod === 'pix' ? 'pix' : 'success');
           }
         });
       }
@@ -3391,7 +3476,7 @@ O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamen
           if (tr && tr.status === 'paid') {
             setPendingTransfer(tr);
             setTransferPaidPopupOpen(true);
-            playBankSound(tr.paymentMethod === 'bank_transfer' ? 'transfer' : 'success');
+            void playBankSound(tr.paymentMethod === 'bank_transfer' ? 'transfer' : 'success');
           }
         });
       }
