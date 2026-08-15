@@ -4,8 +4,8 @@
   "description": "Conta digital da partida: Pix, transferências, propriedades e extrato.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#eef3f1",
-  "theme_color": "#0b5d4a",
+  "background_color": "#F3F6FB",
+  "theme_color": "#0A4DB8",
   "icons": [
     { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "/icons/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" },

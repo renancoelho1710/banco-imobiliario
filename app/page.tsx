@@ -439,9 +439,9 @@ export default function Page() {
           place-items: center;
           background: linear-gradient(
             160deg,
-            #0b5d4a 0%,
-            #08483b 45%,
-            #052f28 100%
+            #0A4DB8 0%,
+            #073B8C 45%,
+            #051F4D 100%
           );
           font-family: system-ui;
           padding: 18px;
@@ -486,9 +486,9 @@ export default function Page() {
           color: #fff;
           background: linear-gradient(
             160deg,
-            #0b5d4a 0%,
-            #08483b 55%,
-            #052f28 100%
+            #0A4DB8 0%,
+            #073B8C 55%,
+            #051F4D 100%
           );
           box-shadow: 0 14px 40px rgba(106, 0, 168, 0.22);
           animation: unspin 0.9s linear infinite;
@@ -569,13 +569,13 @@ export default function Page() {
         }
 
         .active {
-          background: #0b5d4a !important;
+          background: #0A4DB8 !important;
           color: #fff !important;
-          border-color: #0b5d4a !important;
+          border-color: #0A4DB8 !important;
         }
 
         .primary {
-          background: #0b5d4a;
+          background: #0A4DB8;
           color: #fff;
           padding: 12px;
           border-radius: 16px;
@@ -592,7 +592,7 @@ export default function Page() {
   background: none;
   border: none;
   font-size: 12px;
-  color: #08483b;
+  color: #073B8C;
   text-decoration: underline;
   cursor: pointer;
   justify-self: center;
@@ -600,7 +600,7 @@ export default function Page() {
 }
 
 .forgot:hover {
-  color: #0b5d4a;
+  color: #0A4DB8;
 }
         .error {
           background: rgba(0, 0, 0, 0.35);
@@ -646,7 +646,7 @@ export default function Page() {
 
         .danger {
           border: none;
-          background: #08483b;
+          background: #073B8C;
           color: #fff;
           padding: 10px 12px;
           border-radius: 12px;
