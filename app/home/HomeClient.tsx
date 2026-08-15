@@ -54,6 +54,23 @@ type PropertyItem = {
 
 type SaleStatus = 'pending_payment' | 'paid_full' | 'transferred' | 'cancelled';
 
+type PurchaseRequestStatus = 'requested' | 'accepted' | 'completed' | 'cancelled';
+
+type PurchaseRequestDoc = {
+  id: string;
+  at: number;
+  roomCode: string;
+  propId: string;
+  propName: string;
+  buyerUid: string;
+  buyerName: string;
+  price: number;
+  status: PurchaseRequestStatus;
+  saleId?: string;
+  acceptedAt?: number;
+  completedAt?: number;
+};
+
 type SaleDoc = {
   id: string;
   at: number;
@@ -75,6 +92,7 @@ type SaleDoc = {
 
   status: SaleStatus;
   paymentMethod?: 'pix' | 'cash' | 'bank_transfer';
+  requestId?: string;
 
   // opcional: venda entre jogadores
   fromUid?: string;
@@ -105,6 +123,7 @@ type TransferDoc = {
 
 type BankerNotification =
   | { type: 'SALE_PAID'; saleId: string; at: number }
+  | { type: 'SALE_SETTLED'; saleId: string; at: number }
   | { type: 'BAIL_PAID'; prisonerUid: string; at: number }
   | { type: 'TRANSFER_PAID'; transferId: string; at: number };
 
@@ -197,6 +216,36 @@ function installmentAmount(total: number, installments: number, indexZeroBased: 
   const base = Math.floor(totalInt / count);
   const remainder = totalInt % count;
   return base + (idx < remainder ? 1 : 0);
+}
+
+function transferPaidBankSaleInState(state: any, sale: any) {
+  if (!state || !sale) return false;
+  const paidCount = Array.isArray(sale.paidInstallments)
+    ? sale.paidInstallments.filter(Boolean).length
+    : Number(sale.paidCount || 0);
+  const installments = Math.max(1, Number(sale.installments || 1));
+  if (paidCount < installments) return false;
+
+  const rawProps = state.properties || [];
+  const props: PropertyItem[] = Array.isArray(rawProps) ? rawProps : Object.values(rawProps);
+  const idx = props.findIndex((p) => p?.id === sale.propId);
+  if (idx < 0) return false;
+
+  // Nunca toma um imóvel que já esteja com outro jogador.
+  if (props[idx].ownerUid !== BANK_UID && props[idx].ownerUid !== sale.buyerUid) return false;
+
+  props[idx].ownerUid = sale.buyerUid;
+  state.properties = props;
+  sale.status = 'transferred';
+  sale.transferredAt = Date.now();
+
+  if (sale.requestId && state.purchaseRequests?.[sale.requestId]) {
+    state.purchaseRequests[sale.requestId].status = 'completed';
+    state.purchaseRequests[sale.requestId].completedAt = Date.now();
+    state.purchaseRequests[sale.requestId].saleId = sale.id;
+  }
+
+  return true;
 }
 
 
@@ -971,12 +1020,19 @@ const [propView, setPropView] = useState<'sale' | 'mine'>('sale');
   const propsFilteredSorted = useMemo(() => {
     // Bancário vê todas as propriedades.
     // Jogador usa duas abas dentro do mesmo módulo: as dele ou as disponíveis no Banco.
+    const rawSales: any = (room as any)?.sales || {};
+    const activeSalePropIds = new Set(
+      (Array.isArray(rawSales) ? rawSales : Object.values(rawSales))
+        .filter((sale: any) => sale && (sale.status === 'pending_payment' || sale.status === 'paid_full'))
+        .map((sale: any) => sale.propId)
+    );
+
     const baseList =
       role === 'bancario'
         ? propsAll
         : propView === 'mine'
         ? propsAll.filter((property) => property.ownerUid === uid)
-        : propsAll.filter((property) => property.ownerUid === BANK_UID);
+        : propsAll.filter((property) => property.ownerUid === BANK_UID && !activeSalePropIds.has(property.id));
 
     const searchText = propQuery.trim().toLowerCase();
 
@@ -1016,7 +1072,7 @@ const [propView, setPropView] = useState<'sale' | 'mine'>('sale');
     }
 
   return filteredList;
-}, [propsAll, role, uid, propView, propQuery, propColor, propSort]);
+}, [propsAll, room, role, uid, propView, propQuery, propColor, propSort]);
 
   /* ================= RESTANTE DO COMPONENTE CONTINUA ABAIXO ================= */
 
@@ -1068,6 +1124,7 @@ const [txErr, setTxErr] = useState('');
   const [sellOpen, setSellOpen] = useState(false);
   const [sellPropId, setSellPropId] = useState('');
   const [sellToUid, setSellToUid] = useState('');
+  const [sellRequestId, setSellRequestId] = useState('');
   const [sellMode, setSellMode] = useState<'avista' | 'parcelado'>('avista');
   const [sellPaymentMethod, setSellPaymentMethod] = useState<'pix' | 'cash' | 'bank_transfer'>('pix');
   const [sellInstallments, setSellInstallments] = useState(2);
@@ -1356,11 +1413,41 @@ useEffect(() => {
     return (arr as any[]).filter(Boolean);
   }, [room]);
 
+  const availableBankProperties = useMemo(() => {
+    const active = new Set(
+      salesArr
+        .filter((sale: any) => sale?.status === 'pending_payment' || sale?.status === 'paid_full')
+        .map((sale: any) => sale?.propId)
+    );
+    return propsAll.filter((prop) => prop.ownerUid === BANK_UID && !active.has(prop.id));
+  }, [propsAll, salesArr]);
+
   const pendingSales = useMemo(() => {
     const list = salesArr.filter((s: any) => s?.status === 'pending_payment' || s?.status === 'paid_full');
     if (role === 'bancario') return list;
     return list.filter((s: any) => s?.buyerUid === uid);
   }, [salesArr, role, uid]);
+
+  const purchaseRequestsArr = useMemo(() => {
+    const raw: any = (room as any)?.purchaseRequests;
+    if (!raw) return [] as PurchaseRequestDoc[];
+    const arr = Array.isArray(raw) ? raw : Object.values(raw);
+    return (arr as PurchaseRequestDoc[]).filter(Boolean).sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
+  }, [room]);
+
+  const pendingPurchaseRequests = useMemo(() => {
+    return purchaseRequestsArr.filter((r) => r.status === 'requested');
+  }, [purchaseRequestsArr]);
+
+  const myPendingPurchaseRequests = useMemo(() => {
+    if (role !== 'jogador') return [] as PurchaseRequestDoc[];
+    return pendingPurchaseRequests.filter((r) => r.buyerUid === uid);
+  }, [pendingPurchaseRequests, role, uid]);
+
+  const bankerPurchaseRequests = useMemo(() => {
+    if (role !== 'bancario') return [] as PurchaseRequestDoc[];
+    return pendingPurchaseRequests;
+  }, [pendingPurchaseRequests, role]);
 
   const transfersArr = useMemo(() => {
     const raw: any = (room as any)?.transfers;
@@ -1410,6 +1497,7 @@ useEffect(() => {
       const sale = state.sales?.[saleLike.id];
       const buyer = state.players?.[uid];
       if (!sale || sale.status !== 'pending_payment' || sale.buyerUid !== uid || !buyer) return;
+      if (sale.paymentMethod !== 'bank_transfer') return;
       if (buyer.status === 'falido' || buyer.status === 'desistente') return;
 
       sale.paidInstallments = Array.isArray(sale.paidInstallments)
@@ -1418,13 +1506,24 @@ useEffect(() => {
       if (sale.paidInstallments[nextIdx]) return;
       if ((buyer.balance || 0) < amount) return;
 
+      const props: PropertyItem[] = Array.isArray(state.properties)
+        ? state.properties
+        : Object.values(state.properties || {});
+      const saleProp = props.find((p) => p?.id === sale.propId);
+      if (!saleProp || saleProp.ownerUid !== BANK_UID) return;
+
       buyer.balance = (buyer.balance || 0) - amount;
       sale.paidInstallments[nextIdx] = true;
       sale.paidCount = sale.paidInstallments.filter(Boolean).length;
       if (sale.paidCount >= sale.installments) {
         sale.status = 'paid_full';
+        const transferred = transferPaidBankSaleInState(state, sale);
         state.notifications = state.notifications || {};
-        state.notifications.banker = { type: 'SALE_PAID', saleId: sale.id, at: Date.now() };
+        state.notifications.banker = {
+          type: transferred ? 'SALE_SETTLED' : 'SALE_PAID',
+          saleId: sale.id,
+          at: Date.now(),
+        };
       }
 
       state.players[uid] = buyer;
@@ -1872,6 +1971,12 @@ function openOnlineTransfer() {
 
           const expected = installmentAmount(Number(sale.total || 0), Number(sale.installments || 1), idx);
           if (amount !== expected) return;
+
+          const props: PropertyItem[] = Array.isArray(state.properties)
+            ? state.properties
+            : Object.values(state.properties || {});
+          const saleProp = props.find((p) => p?.id === sale.propId);
+          if (!saleProp || saleProp.ownerUid !== BANK_UID) return;
         }
 
         // Valida compra entre jogadores antes de movimentar.
@@ -1901,8 +2006,13 @@ function openOnlineTransfer() {
 
           if (sale.paidCount >= sale.installments) {
             sale.status = 'paid_full';
+            const transferred = transferPaidBankSaleInState(state, sale);
             state.notifications = state.notifications || {};
-            state.notifications.banker = { type: 'SALE_PAID', saleId: sale.id, at: Date.now() };
+            state.notifications.banker = {
+              type: transferred ? 'SALE_SETTLED' : 'SALE_PAID',
+              saleId: sale.id,
+              at: Date.now(),
+            };
           }
           state.sales[saleId] = sale;
         }
@@ -1998,23 +2108,109 @@ function openOnlineTransfer() {
     }
   }
 
+/* ============ SOLICITAÇÃO DE COMPRA (jogador -> Banco) ============ */
+
+  async function requestPropertyPurchase(prop: PropertyItem) {
+    if (!room || !me || role !== 'jogador' || isClosed) return;
+    if (prop.ownerUid !== BANK_UID) {
+      window.alert('Essa propriedade não está mais disponível no Banco.');
+      return;
+    }
+
+    const existing = purchaseRequestsArr.find(
+      (r) => r.status === 'requested' && r.buyerUid === uid && r.propId === prop.id
+    );
+    if (existing) {
+      window.alert('Você já solicitou essa propriedade. Aguarde o Banco atender em Pendências.');
+      setFocus('pend');
+      return;
+    }
+
+    const ok = window.confirm(
+      `Solicitar ao Banco a compra de ${prop.name} por ${money(prop.price)}?
+
+O bancário escolherá Pix, Transferência ou Dinheiro e poderá definir pagamento à vista ou parcelado.`
+    );
+    if (!ok) return;
+
+    const requestId = `request-${idNow()}`;
+    const request: PurchaseRequestDoc = {
+      id: requestId,
+      at: Date.now(),
+      roomCode,
+      propId: prop.id,
+      propName: prop.name,
+      buyerUid: uid,
+      buyerName: me.name,
+      price: prop.price,
+      status: 'requested',
+    };
+
+    const result = await runTransaction(ref(db, roomRefBase), (state: any) => {
+      if (!state) return;
+      const player = state.players?.[uid];
+      if (!player || player.status === 'falido' || player.status === 'desistente') return;
+
+      const props: PropertyItem[] = Array.isArray(state.properties)
+        ? state.properties
+        : Object.values(state.properties || {});
+      const currentProp = props.find((p) => p?.id === prop.id);
+      if (!currentProp || currentProp.ownerUid !== BANK_UID) return;
+
+      state.purchaseRequests = state.purchaseRequests || {};
+      const duplicate = Object.values(state.purchaseRequests).some((item: any) =>
+        item?.status === 'requested' && item?.buyerUid === uid && item?.propId === prop.id
+      );
+      if (duplicate) return;
+
+      state.purchaseRequests[requestId] = request;
+      return state;
+    });
+
+    if (!result.committed) {
+      window.alert('Não foi possível enviar a solicitação. A propriedade pode ter sido vendida ou já existe um pedido seu.');
+      return;
+    }
+
+    setFocus('pend');
+    playBeep('notif');
+    window.alert('Solicitação enviada ao Banco. Ela aparecerá nas Pendências do bancário.');
+  }
+
+  async function cancelPurchaseRequest(request: PurchaseRequestDoc) {
+    if (role !== 'jogador' || request.buyerUid !== uid || request.status !== 'requested') return;
+    const ok = window.confirm(`Cancelar a solicitação de compra de ${request.propName}?`);
+    if (!ok) return;
+
+    await runTransaction(ref(db, `${roomRefBase}/purchaseRequests/${request.id}`), (current: any) => {
+      if (!current || current.status !== 'requested' || current.buyerUid !== uid) return;
+      current.status = 'cancelled';
+      current.cancelledAt = Date.now();
+      return current;
+    });
+  }
+
 /* ============ VENDA DE PROPRIEDADE (bancário) ============ */
 
-  function openSell(propId: string) {
-  const prop = properties.find((p) => p.id === propId);
-  if (!prop) return;
-  if (prop.ownerUid !== BANK_UID) return; // não vende se já foi vendida
+  function openSell(
+    propId: string,
+    prefill?: { buyerUid?: string; requestId?: string }
+  ) {
+    const prop = properties.find((p) => p.id === propId);
+    if (!prop) return;
+    if (prop.ownerUid !== BANK_UID) return; // não vende se já foi vendida
 
-  setSellPropId(propId);
-  setSellToUid('');
-  setSellMode('avista');
-  setSellPaymentMethod('pix');
-  setSellInstallments(2);
-  setSellQr('');
-  setSellCode('');
-  setSellCashMsg('');
-  setSellOpen(true);
-}
+    setSellPropId(propId);
+    setSellToUid(prefill?.buyerUid || '');
+    setSellRequestId(prefill?.requestId || '');
+    setSellMode('avista');
+    setSellPaymentMethod('pix');
+    setSellInstallments(2);
+    setSellQr('');
+    setSellCode('');
+    setSellCashMsg('');
+    setSellOpen(true);
+  }
 
   async function generateSellQr() {
     if (!room) return;
@@ -2029,7 +2225,16 @@ function openOnlineTransfer() {
       const buyer = room.players?.[sellToUid];
 
       if (!prop) throw new Error('Propriedade não encontrada.');
+      if (prop.ownerUid !== BANK_UID) throw new Error('Essa propriedade não está mais disponível no Banco.');
       if (!buyer) throw new Error('Selecione um jogador.');
+      if (buyer.status === 'falido' || buyer.status === 'desistente') throw new Error('A conta desse jogador está encerrada.');
+
+      if (sellRequestId) {
+        const request = purchaseRequestsArr.find((r) => r.id === sellRequestId);
+        if (!request || request.status !== 'requested' || request.buyerUid !== buyer.uid || request.propId !== prop.id) {
+          throw new Error('Essa solicitação de compra não está mais pendente.');
+        }
+      }
 
       const installments = sellMode === 'avista' ? 1 : Math.min(6, Math.max(2, sellInstallments));
       const perInstallment = installmentAmount(prop.price, installments, 0);
@@ -2051,9 +2256,54 @@ function openOnlineTransfer() {
         paidCount: 0,
         status: 'pending_payment',
         paymentMethod: sellPaymentMethod,
+        ...(sellRequestId ? { requestId: sellRequestId } : {}),
       };
 
-      await set(ref(db, `${roomRefBase}/sales/${saleId}`), sale);
+      const saleCreated = await runTransaction(ref(db, roomRefBase), (state: any) => {
+        if (!state) return;
+
+        const currentBuyer = state.players?.[buyer.uid];
+        if (!currentBuyer || currentBuyer.status === 'falido' || currentBuyer.status === 'desistente') return;
+
+        const props: PropertyItem[] = Array.isArray(state.properties)
+          ? state.properties
+          : Object.values(state.properties || {});
+        const currentProp = props.find((p) => p?.id === prop.id);
+        if (!currentProp || currentProp.ownerUid !== BANK_UID) return;
+
+        state.sales = state.sales || {};
+        const alreadyNegotiating = Object.values(state.sales).some((item: any) =>
+          item?.propId === prop.id && (item?.status === 'pending_payment' || item?.status === 'paid_full')
+        );
+        if (alreadyNegotiating) return;
+
+        state.purchaseRequests = state.purchaseRequests || {};
+        if (sellRequestId) {
+          const req = state.purchaseRequests[sellRequestId];
+          if (!req || req.status !== 'requested' || req.buyerUid !== buyer.uid || req.propId !== prop.id) return;
+          req.status = 'accepted';
+          req.saleId = saleId;
+          req.acceptedAt = Date.now();
+          state.purchaseRequests[sellRequestId] = req;
+        }
+
+        // Assim que o Banco inicia a venda, encerra pedidos concorrentes do mesmo imóvel.
+        Object.values(state.purchaseRequests).forEach((item: any) => {
+          if (!item || item.id === sellRequestId) return;
+          if (item.propId === prop.id && item.status === 'requested') {
+            item.status = 'cancelled';
+            item.cancelledAt = Date.now();
+            item.cancelReason = 'property_in_negotiation';
+          }
+        });
+
+        state.sales[saleId] = sale;
+        return state;
+      });
+
+      if (!saleCreated.committed) {
+        throw new Error('Não foi possível iniciar a venda. O imóvel pode já estar em negociação ou não estar mais disponível.');
+      }
 
       if (sellPaymentMethod === 'cash') {
         await registerCashSaleInstallment(sale);
@@ -2061,7 +2311,7 @@ function openOnlineTransfer() {
         setSellCode('');
         setSellCashMsg(
           installments === 1
-            ? 'Pagamento em dinheiro registrado. Confirme a transferência da propriedade.'
+            ? 'Pagamento em dinheiro registrado. A propriedade foi transferida automaticamente.'
             : `1ª parcela em dinheiro registrada. Restam ${installments - 1} parcela(s).`
         );
         playBeep('notif');
@@ -2138,13 +2388,24 @@ function openOnlineTransfer() {
         : Array(sale.installments).fill(false);
       if (sale.paidInstallments[nextIdx]) return;
 
+      const props: PropertyItem[] = Array.isArray(state.properties)
+        ? state.properties
+        : Object.values(state.properties || {});
+      const saleProp = props.find((p) => p?.id === sale.propId);
+      if (!saleProp || saleProp.ownerUid !== BANK_UID) return;
+
       sale.paidInstallments[nextIdx] = true;
       sale.paidCount = sale.paidInstallments.filter(Boolean).length;
 
       if (sale.paidCount >= sale.installments) {
         sale.status = 'paid_full';
+        const transferred = transferPaidBankSaleInState(state, sale);
         state.notifications = state.notifications || {};
-        state.notifications.banker = { type: 'SALE_PAID', saleId: sale.id, at: Date.now() };
+        state.notifications.banker = {
+          type: transferred ? 'SALE_SETTLED' : 'SALE_PAID',
+          saleId: sale.id,
+          at: Date.now(),
+        };
       }
 
       state.sales[sale.id] = sale;
@@ -2182,12 +2443,13 @@ function openOnlineTransfer() {
       const n = snap.val() as BankerNotification | null;
       if (!n?.type) return;
 
-      if (n.type === 'SALE_PAID' && n.saleId) {
+      if ((n.type === 'SALE_PAID' || n.type === 'SALE_SETTLED') && n.saleId) {
         get(ref(db, `${roomRefBase}/sales/${n.saleId}`)).then((sSale) => {
           const sale = sSale.val() as SaleDoc | null;
-          if (sale && sale.status === 'paid_full') {
+          if (sale && (sale.status === 'paid_full' || sale.status === 'transferred')) {
             setPendingTransferSale(sale);
             setPaidPopupOpen(true);
+            playBeep('notif');
           }
         });
       }
@@ -2220,25 +2482,17 @@ function openOnlineTransfer() {
 
     const saleId = pendingTransferSale.id;
 
-    await runTransaction(ref(db, `${roomRefBase}`), (state: any) => {
-      if (!state) return state;
-
-      const sale = state.sales?.[saleId];
-      if (!sale) return state;
-      if (sale.status !== 'paid_full') return state;
-
-      const props: PropertyItem[] = state.properties || [];
-      const idx = props.findIndex((p) => p.id === sale.propId);
-      if (idx >= 0) {
-        props[idx].ownerUid = sale.buyerUid;
-      }
-      state.properties = props;
-
-      sale.status = 'transferred';
-      state.sales[saleId] = sale;
-
-      return state;
-    });
+    // Compatibilidade com vendas antigas que ficaram em paid_full.
+    if (pendingTransferSale.status === 'paid_full') {
+      await runTransaction(ref(db, `${roomRefBase}`), (state: any) => {
+        if (!state) return state;
+        const sale = state.sales?.[saleId];
+        if (!sale || sale.status !== 'paid_full') return state;
+        transferPaidBankSaleInState(state, sale);
+        state.sales[saleId] = sale;
+        return state;
+      });
+    }
 
     setPaidPopupOpen(false);
     setPendingTransferSale(null);
@@ -2847,16 +3101,53 @@ function matchesQuery(p: PropertyItem, q: string) {
               )}
             
                           {/* PENDÊNCIAS / PARCELAS */}
-              {focus === 'pend' && (pendingSales.length > 0 || pendingBankPropertyTransfers.length > 0) && (
+              {focus === 'pend' && (pendingSales.length > 0 || pendingBankPropertyTransfers.length > 0 || bankerPurchaseRequests.length > 0 || myPendingPurchaseRequests.length > 0) && (
                 <div className="pendBox">
                   <div className="pendTitle">Pendências</div>
                   <div className="pendHint">
                     {role === 'bancario'
-                      ? 'Parcelas pendentes dos jogadores. Pix e dinheiro continuam disponíveis.'
-                      : 'Compras e transferências pendentes. Você pode pagar por transferência bancária direto pela sua conta.'}
+                      ? 'Solicitações de compra e pagamentos pendentes dos jogadores.'
+                      : 'Solicitações enviadas, compras e transferências pendentes da sua conta.'}
                   </div>
 
                   <div className="pendList">
+                    {role === 'bancario' && bankerPurchaseRequests.map((req) => (
+                      <div key={req.id} className="pendItem">
+                        <div className="pendRow">
+                          <div className="pendMain">
+                            <div className="pendName">Solicitação • {req.propName}</div>
+                            <div className="pendSub">
+                              <b>{req.buyerName}</b> quer comprar • {money(req.price)}
+                            </div>
+                          </div>
+                          <button
+                            className="miniBtn"
+                            onClick={() => {
+                              openSell(req.propId, { buyerUid: req.buyerUid, requestId: req.id });
+                            }}
+                          >
+                            Atender
+                          </button>
+                        </div>
+                        <div className="pendNext">Escolha Pix, Transferência ou Dinheiro e defina à vista ou parcelado.</div>
+                      </div>
+                    ))}
+
+                    {role === 'jogador' && myPendingPurchaseRequests.map((req) => (
+                      <div key={req.id} className="pendItem">
+                        <div className="pendRow">
+                          <div className="pendMain">
+                            <div className="pendName">Solicitação enviada • {req.propName}</div>
+                            <div className="pendSub">{money(req.price)} • aguardando o Banco</div>
+                          </div>
+                          <button className="miniBtn" onClick={() => cancelPurchaseRequest(req)}>
+                            Cancelar
+                          </button>
+                        </div>
+                        <div className="pendNext">Quando o bancário atender, a cobrança aparecerá aqui.</div>
+                      </div>
+                    ))}
+
                     {pendingSales.map((s: any) => {
                       const inst = Math.max(1, Number(s?.installments || 1));
                       const paidArr: boolean[] = Array.isArray(s?.paidInstallments) ? s.paidInstallments : Array(inst).fill(false);
@@ -2892,9 +3183,9 @@ function matchesQuery(p: PropertyItem, q: string) {
                                 </button>
                               </div>
                             )}
-                            {role === 'jogador' && nextIdx >= 0 && (
+                            {role === 'jogador' && nextIdx >= 0 && s.paymentMethod === 'bank_transfer' && (
                               <button className="miniBtn" onClick={() => paySaleByBankTransfer(s as SaleDoc)}>
-                                Transferência
+                                Pagar transferência
                               </button>
                             )}
                           </div>
@@ -2923,6 +3214,8 @@ function matchesQuery(p: PropertyItem, q: string) {
                           {nextIdx >= 0 ? (
                             <div className="pendNext">
                               Próxima: <b>Parcela {nextIdx + 1}/{inst}</b> ({money(per)})
+                              {role === 'jogador' && s.paymentMethod === 'pix' ? ' • pague pelo QR gerado pelo Banco' : ''}
+                              {role === 'jogador' && s.paymentMethod === 'cash' ? ' • pagamento em dinheiro é registrado pelo Banco' : ''}
                             </div>
                           ) : (
                             <div className="pendNext ok">Tudo pago ✅</div>
@@ -3037,7 +3330,12 @@ function matchesQuery(p: PropertyItem, q: string) {
               <span className="ico">
                 <IconProps />
               </span>
-              <span>Pendências</span>
+              <span>
+                Pendências
+                {(pendingSales.length + pendingBankPropertyTransfers.length + bankerPurchaseRequests.length + myPendingPurchaseRequests.length) > 0
+                  ? ` (${pendingSales.length + pendingBankPropertyTransfers.length + bankerPurchaseRequests.length + myPendingPurchaseRequests.length})`
+                  : ''}
+              </span>
             </button>
 
           </div>
@@ -3137,7 +3435,7 @@ function matchesQuery(p: PropertyItem, q: string) {
       className={propView === 'sale' ? 'propViewBtn active' : 'propViewBtn'}
       onClick={() => { setPropView('sale'); setShowAllProps(false); }}
     >
-      À venda <span>{propsAll.filter((p) => p.ownerUid === BANK_UID).length}</span>
+      À venda <span>{availableBankProperties.length}</span>
     </button>
   </div>
 )}
@@ -3205,6 +3503,9 @@ function matchesQuery(p: PropertyItem, q: string) {
               return list.map((p) => {
                 const sold = p.ownerUid !== BANK_UID;
                 const isMine = role === 'jogador' && p.ownerUid === uid;
+                const myRequest = role === 'jogador'
+                  ? myPendingPurchaseRequests.find((req) => req.propId === p.id)
+                  : undefined;
                 const ownerName = sold ? (room.players?.[p.ownerUid]?.name || 'Jogador') : BANK_NAME;
                                        
                 return (
@@ -3277,8 +3578,14 @@ function matchesQuery(p: PropertyItem, q: string) {
     GERENCIAR
   </button>
 ) : (
-  <button className="pBtn disabled" type="button" disabled>
-    DISPONÍVEL NO BANCO
+  <button
+    className={`pBtn ${isClosed || myRequest ? 'disabled' : ''}`}
+    type="button"
+    disabled={isClosed || !!myRequest}
+    onClick={() => requestPropertyPurchase(p)}
+    title={myRequest ? 'Solicitação já enviada ao Banco' : 'Solicitar esta propriedade ao Banco'}
+  >
+    {myRequest ? 'SOLICITADO' : 'SOLICITAR COMPRA'}
   </button>
 )}
 
@@ -3605,6 +3912,7 @@ function matchesQuery(p: PropertyItem, q: string) {
     setSellOpen(false);
     setSellPropId('');
     setSellToUid('');
+    setSellRequestId('');
     setSellMode('avista');
     setSellPaymentMethod('pix');
     setSellInstallments(2);
@@ -3632,8 +3940,13 @@ function matchesQuery(p: PropertyItem, q: string) {
               </div>
 
               <div className="field">
-                <div className="lab">Vender para</div>
-                <select className="inp" value={sellToUid} onChange={(e) => setSellToUid(e.target.value)}>
+                <div className="lab">{sellRequestId ? 'Solicitado por' : 'Vender para'}</div>
+                <select
+                  className="inp"
+                  value={sellToUid}
+                  disabled={!!sellRequestId}
+                  onChange={(e) => setSellToUid(e.target.value)}
+                >
                   <option value="">Selecione um jogador...</option>
                   {playersArr
                     .filter((p) => p.uid !== bankerUid && p.uid !== BANK_UID && p.status !== 'falido' && p.status !== 'desistente')
@@ -3643,6 +3956,9 @@ function matchesQuery(p: PropertyItem, q: string) {
                       </option>
                     ))}
                 </select>
+                {sellRequestId && (
+                  <div className="mHint">Pedido iniciado pelo jogador. Agora o Banco define como ele vai pagar.</div>
+                )}
               </div>
 
               <div className="field">
@@ -3771,10 +4087,10 @@ function matchesQuery(p: PropertyItem, q: string) {
         })()}
       </Modal>
 
-           {/* ===== POPUP: pagou tudo, transferir? (banco -> jogador) ===== */}
+           {/* ===== POPUP: pagamento concluído / propriedade transferida ===== */}
       <Modal
         open={paidPopupOpen}
-        title="Pagamento concluído (Propriedade paga)"
+        title="Pagamento concluído"
         onClose={() => {
           setPaidPopupOpen(false);
           setPendingTransferSale(null);
@@ -3799,21 +4115,16 @@ function matchesQuery(p: PropertyItem, q: string) {
               </div>
               <div className="li2">
                 <span>Status</span>
-                <b>Pago • Transferir?</b>
+                <b>
+                  {pendingTransferSale.status === 'transferred'
+                    ? 'Pago • propriedade transferida automaticamente ✅'
+                    : 'Pago • finalizar transferência'}
+                </b>
               </div>
             </div>
 
             <button className="btn primary" onClick={confirmTransferNow}>
-              Sim, transferir agora
-            </button>
-            <button
-              className="btn"
-              onClick={() => {
-                setPaidPopupOpen(false);
-                setPendingTransferSale(null);
-              }}
-            >
-              Não agora
+              {pendingTransferSale.status === 'transferred' ? 'OK' : 'Finalizar transferência'}
             </button>
           </>
         )}
@@ -5592,9 +5903,34 @@ function matchesQuery(p: PropertyItem, q: string) {
                         >
                           {viewProp.ownerUid !== BANK_UID ? "Já vendida" : "Vender"}
                         </button>
+                      ) : viewProp.ownerUid === uid ? (
+                        <button
+                          className="btn primary"
+                          type="button"
+                          onClick={() => {
+                            setViewPropOpen(false);
+                            openRent(viewProp.id);
+                          }}
+                        >
+                          Gerenciar
+                        </button>
+                      ) : viewProp.ownerUid === BANK_UID ? (
+                        <button
+                          className="btn primary"
+                          type="button"
+                          disabled={isClosed || myPendingPurchaseRequests.some((req) => req.propId === viewProp.id)}
+                          onClick={() => {
+                            setViewPropOpen(false);
+                            requestPropertyPurchase(viewProp as PropertyItem);
+                          }}
+                        >
+                          {myPendingPurchaseRequests.some((req) => req.propId === viewProp.id)
+                            ? 'Solicitação enviada'
+                            : 'Solicitar compra'}
+                        </button>
                       ) : (
-                        <button className="btn primary" type="button" onClick={() => openRent(viewProp.id)}>
-                          Cobrar aluguel
+                        <button className="btn disabled" type="button" disabled>
+                          Indisponível
                         </button>
                       )}
                     </div>
