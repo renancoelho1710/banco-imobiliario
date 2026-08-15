@@ -74,6 +74,7 @@ type SaleDoc = {
   paidCount: number;
 
   status: SaleStatus;
+  paymentMethod?: 'pix' | 'cash' | 'bank_transfer';
 
   // opcional: venda entre jogadores
   fromUid?: string;
@@ -99,7 +100,7 @@ type TransferDoc = {
   amount: number;
 
   status: TransferStatus;
-  paymentMethod?: 'pix' | 'cash';
+  paymentMethod?: 'pix' | 'cash' | 'bank_transfer';
 };
 
 type BankerNotification =
@@ -175,6 +176,20 @@ function parseMoneyBRL(text: string) {
   return Math.round(n);
 }
 
+function parseMoneyTyping(text: string) {
+  // Durante a digitação tratamos os dígitos como reais inteiros.
+  // Ex.: 10 -> R$ 10 | 100000 -> R$ 100.000.
+  const digits = (text || '').replace(/\D/g, '');
+  if (!digits) return 0;
+  const n = Number(digits.slice(0, 12));
+  return Number.isFinite(n) ? Math.round(n) : 0;
+}
+
+function moneyTyping(n: number) {
+  const v = Math.max(0, Math.round(Number(n) || 0));
+  return `R$ ${v.toLocaleString('pt-BR')}`;
+}
+
 function installmentAmount(total: number, installments: number, indexZeroBased: number) {
   const count = Math.max(1, Math.floor(installments || 1));
   const totalInt = Math.max(0, Math.round(total || 0));
@@ -220,11 +235,11 @@ function parseCode(text: string): QrPayload | null {
 async function makeQrDataUrl(text: string) {
   try {
     // @ts-ignore
-    return await QRCode.toDataURL(text, { margin: 1, scale: 8, errorCorrectionLevel: 'M' });
+    return await QRCode.toDataURL(text, { margin: 4, width: 720, errorCorrectionLevel: 'M' });
   } catch {
     // fallback: tenta uma configuração mais simples
     // @ts-ignore
-    return await QRCode.toDataURL(text, { margin: 0, scale: 6 });
+    return await QRCode.toDataURL(text, { margin: 4, width: 640, errorCorrectionLevel: 'M' });
   }
 }
 
@@ -826,6 +841,16 @@ function QrCam({
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stopRef = useRef(false);
+  const onCodeRef = useRef(onCode);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onCodeRef.current = onCode;
+  }, [onCode]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   useEffect(() => {
     stopRef.current = false;
@@ -835,7 +860,7 @@ function QrCam({
     async function start() {
       try {
         if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-          onError('Seu navegador não suporta câmera. Use "Colar código".');
+          onErrorRef.current('Seu navegador não suporta câmera. Use "Colar código".');
           return;
         }
 
@@ -854,7 +879,7 @@ function QrCam({
             if (result) {
               stopRef.current = true;
               try { controls?.stop?.(); } catch {}
-              onCode(String(result.getText()));
+              onCodeRef.current(String(result.getText()));
               return;
             }
 
@@ -863,7 +888,7 @@ function QrCam({
           }
         );
       } catch {
-        onError('Permissão negada ou erro ao acessar câmera. Use "Colar código".');
+        onErrorRef.current('Permissão negada ou erro ao acessar câmera. Use "Colar código".');
       }
     }
 
@@ -874,7 +899,7 @@ function QrCam({
       try { controls?.stop?.(); } catch {}
       // try { reader?.reset?.(); } catch {}
     };
-  }, [onCode, onError, onFallback]);
+  }, []);
 
   return (
     <div className="camWrap">
@@ -937,18 +962,21 @@ const [propColor, setPropColor] = useState<'all' | string>('all');
 const [propSort, setPropSort] = useState<
   'none' | 'rent_desc' | 'rent_asc' | 'mort_desc' | 'mort_asc'
 >('none');
+const [propView, setPropView] = useState<'sale' | 'mine'>('sale');
 
 
 
   /* ================= PROPRIEDADES FILTRADAS E ORDENADAS ================= */
 
   const propsFilteredSorted = useMemo(() => {
-    // Bancário vê todas as propriedades
-    // Jogador vê apenas as propriedades que pertencem ao banco
+    // Bancário vê todas as propriedades.
+    // Jogador usa duas abas dentro do mesmo módulo: as dele ou as disponíveis no Banco.
     const baseList =
       role === 'bancario'
         ? propsAll
-        : propsForPlayer;
+        : propView === 'mine'
+        ? propsAll.filter((property) => property.ownerUid === uid)
+        : propsAll.filter((property) => property.ownerUid === BANK_UID);
 
     const searchText = propQuery.trim().toLowerCase();
 
@@ -988,7 +1016,7 @@ const [propSort, setPropSort] = useState<
     }
 
   return filteredList;
-}, [propsAll, propsForPlayer, role, propQuery, propColor, propSort]);
+}, [propsAll, role, uid, propView, propQuery, propColor, propSort]);
 
   /* ================= RESTANTE DO COMPONENTE CONTINUA ABAIXO ================= */
 
@@ -1041,7 +1069,7 @@ const [txErr, setTxErr] = useState('');
   const [sellPropId, setSellPropId] = useState('');
   const [sellToUid, setSellToUid] = useState('');
   const [sellMode, setSellMode] = useState<'avista' | 'parcelado'>('avista');
-  const [sellPaymentMethod, setSellPaymentMethod] = useState<'pix' | 'cash'>('pix');
+  const [sellPaymentMethod, setSellPaymentMethod] = useState<'pix' | 'cash' | 'bank_transfer'>('pix');
   const [sellInstallments, setSellInstallments] = useState(2);
   const [sellQr, setSellQr] = useState<string>(''); // dataUrl
   const [sellCode, setSellCode] = useState<string>(''); // BI|...
@@ -1080,7 +1108,7 @@ const [txErr, setTxErr] = useState('');
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferPropId, setTransferPropId] = useState('');
   const [transferToUid, setTransferToUid] = useState('');
-  const [transferPaymentMethod, setTransferPaymentMethod] = useState<'pix' | 'cash'>('pix');
+  const [transferPaymentMethod, setTransferPaymentMethod] = useState<'pix' | 'cash' | 'bank_transfer'>('pix');
   const [transferCashMsg, setTransferCashMsg] = useState('');
   const [transferQrUrl, setTransferQrUrl] = useState('');
   const [transferCode, setTransferCode] = useState('');
@@ -1334,10 +1362,189 @@ useEffect(() => {
     return list.filter((s: any) => s?.buyerUid === uid);
   }, [salesArr, role, uid]);
 
+  const transfersArr = useMemo(() => {
+    const raw: any = (room as any)?.transfers;
+    if (!raw) return [] as TransferDoc[];
+    const arr = Array.isArray(raw) ? raw : Object.values(raw);
+    return (arr as TransferDoc[]).filter(Boolean);
+  }, [room]);
+
+  const pendingBankPropertyTransfers = useMemo(() => {
+    if (role !== 'jogador') return [] as TransferDoc[];
+    return transfersArr.filter(
+      (tr) => tr?.status === 'pending_payment' && tr?.paymentMethod === 'bank_transfer' && tr?.toUid === uid
+    );
+  }, [transfersArr, role, uid]);
+
   function saleInstallmentAmount(sale: any, indexZeroBased: number) {
     const inst = Math.max(1, Number(sale?.installments || 1));
     const total = Number(sale?.total || 0);
     return installmentAmount(total, inst, indexZeroBased);
+  }
+
+  async function paySaleByBankTransfer(saleLike: SaleDoc) {
+    if (!room || !me || role !== 'jogador') return;
+    if (saleLike.buyerUid !== uid) return;
+
+    const inst = Math.max(1, Number(saleLike.installments || 1));
+    const paidArr: boolean[] = Array.isArray(saleLike.paidInstallments)
+      ? saleLike.paidInstallments
+      : Array(inst).fill(false);
+    const nextIdx = paidArr.findIndex((v) => !v);
+    if (nextIdx < 0) return;
+
+    const amount = saleInstallmentAmount(saleLike, nextIdx);
+    if ((me.balance || 0) < amount) {
+      alert('Saldo insuficiente para concluir a transferência.');
+      return;
+    }
+
+    const installment = nextIdx + 1;
+    const ok = window.confirm(
+      `Transferir ${money(amount)} da sua conta para o Banco?\n\n${saleLike.propName} • Parcela ${installment}/${inst}`
+    );
+    if (!ok) return;
+
+    const result = await runTransaction(ref(db, `${roomRefBase}`), (state: any) => {
+      if (!state) return;
+      const sale = state.sales?.[saleLike.id];
+      const buyer = state.players?.[uid];
+      if (!sale || sale.status !== 'pending_payment' || sale.buyerUid !== uid || !buyer) return;
+      if (buyer.status === 'falido' || buyer.status === 'desistente') return;
+
+      sale.paidInstallments = Array.isArray(sale.paidInstallments)
+        ? sale.paidInstallments
+        : Array(sale.installments).fill(false);
+      if (sale.paidInstallments[nextIdx]) return;
+      if ((buyer.balance || 0) < amount) return;
+
+      buyer.balance = (buyer.balance || 0) - amount;
+      sale.paidInstallments[nextIdx] = true;
+      sale.paidCount = sale.paidInstallments.filter(Boolean).length;
+      if (sale.paidCount >= sale.installments) {
+        sale.status = 'paid_full';
+        state.notifications = state.notifications || {};
+        state.notifications.banker = { type: 'SALE_PAID', saleId: sale.id, at: Date.now() };
+      }
+
+      state.players[uid] = buyer;
+      state.players[BANK_UID] = state.players[BANK_UID] || {
+        uid: BANK_UID,
+        name: BANK_NAME,
+        role: 'bancario',
+        status: 'ativo',
+        balance: BANK_BALANCE,
+        debtToBank: 0,
+      };
+      state.players[BANK_UID].balance = BANK_BALANCE;
+      state.sales[saleLike.id] = sale;
+      return state;
+    });
+
+    if (!result.committed) {
+      alert('Não foi possível concluir. A parcela pode já ter sido paga ou a venda foi encerrada.');
+      return;
+    }
+
+    const title = `${inst === 1 ? 'Compra' : `Parcela ${installment}/${inst}`} • ${saleLike.propName} • Transferência bancária`;
+    await pushLedgerPair({
+      title,
+      amount,
+      fromUid: uid,
+      fromName: me.name,
+      toUid: BANK_UID,
+      toName: BANK_NAME,
+      kindPaid: 'compra',
+      kindReceived: 'venda',
+      meta: {
+        type: 'PROPERTY_PURCHASE',
+        paymentMethod: 'bank_transfer',
+        saleId: saleLike.id,
+        installment,
+        totalInstallments: inst,
+        propId: saleLike.propId,
+      },
+    });
+
+    setLastReceipt({
+      id: `transfer-${saleLike.id}-${installment}-${Date.now()}`,
+      at: Date.now(),
+      title,
+      amount,
+      fromName: me.name,
+      toName: BANK_NAME,
+    });
+    setReceiptOpen(true);
+    playBeep('notif');
+  }
+
+  async function payPropertyByBankTransfer(trLike: TransferDoc) {
+    if (!room || !me || role !== 'jogador') return;
+    if (trLike.toUid !== uid || trLike.status !== 'pending_payment') return;
+    const amount = Math.max(0, Number(trLike.amount || 0));
+    if ((me.balance || 0) < amount) {
+      alert('Saldo insuficiente para concluir a transferência.');
+      return;
+    }
+
+    const ok = window.confirm(
+      `Transferir ${money(amount)} para ${trLike.fromName}?\n\nCompra de ${trLike.propName}`
+    );
+    if (!ok) return;
+
+    const result = await runTransaction(ref(db, `${roomRefBase}`), (state: any) => {
+      if (!state) return;
+      const tr = state.transfers?.[trLike.id];
+      const buyer = state.players?.[uid];
+      const seller = state.players?.[trLike.fromUid];
+      if (!tr || tr.status !== 'pending_payment' || tr.toUid !== uid || tr.paymentMethod !== 'bank_transfer') return;
+      if (!buyer || !seller) return;
+      if (buyer.status === 'falido' || buyer.status === 'desistente') return;
+      if ((buyer.balance || 0) < amount) return;
+
+      const props = Array.isArray(state.properties) ? state.properties : Object.values(state.properties || {});
+      const prop = (props as any[]).find((item: any) => item?.id === tr.propId);
+      if (!prop || prop.ownerUid !== tr.fromUid) return;
+
+      buyer.balance = (buyer.balance || 0) - amount;
+      seller.balance = (seller.balance || 0) + amount;
+      tr.status = 'paid';
+      state.players[uid] = buyer;
+      state.players[tr.fromUid] = seller;
+      state.transfers[trLike.id] = tr;
+      state.notifications = state.notifications || {};
+      state.notifications.banker = { type: 'TRANSFER_PAID', transferId: tr.id, at: Date.now() };
+      return state;
+    });
+
+    if (!result.committed) {
+      alert('Não foi possível concluir. A negociação pode ter mudado ou já ter sido paga.');
+      return;
+    }
+
+    const title = `Compra • ${trLike.propName} • Transferência bancária`;
+    await pushLedgerPair({
+      title,
+      amount,
+      fromUid: uid,
+      fromName: me.name,
+      toUid: trLike.fromUid,
+      toName: trLike.fromName,
+      kindPaid: 'compra',
+      kindReceived: 'venda',
+      meta: { type: 'PROP_TRANSFER', transferId: trLike.id, propId: trLike.propId, paymentMethod: 'bank_transfer' },
+    });
+
+    setLastReceipt({
+      id: `transfer-${trLike.id}-${Date.now()}`,
+      at: Date.now(),
+      title,
+      amount,
+      fromName: me.name,
+      toName: trLike.fromName,
+    });
+    setReceiptOpen(true);
+    playBeep('notif');
   }
 
   async function openNextInstallmentQr(sale: any) {
@@ -1580,14 +1787,18 @@ function openOnlineTransfer() {
 }
 
 
-  function parseAndPreview() {
+  function previewPaymentCode(rawCode: string) {
     setScanError('');
-    const payload = parseCode(scanText.trim());
+    const payload = parseCode(rawCode.trim());
     if (!payload) return setScanError('QR inválido.');
     if (payload.room !== roomCode) return setScanError('QR de outra sala.');
     if (payload.amount <= 0) return setScanError('Valor inválido.');
     setPayloadToPay(payload);
     setConfirmOpen(true);
+  }
+
+  function parseAndPreview() {
+    previewPaymentCode(scanText);
   }
     
     async function confirmPay() {
@@ -1839,6 +2050,7 @@ function openOnlineTransfer() {
         paidInstallments: Array(installments).fill(false),
         paidCount: 0,
         status: 'pending_payment',
+        paymentMethod: sellPaymentMethod,
       };
 
       await set(ref(db, `${roomRefBase}/sales/${saleId}`), sale);
@@ -1851,6 +2063,18 @@ function openOnlineTransfer() {
           installments === 1
             ? 'Pagamento em dinheiro registrado. Confirme a transferência da propriedade.'
             : `1ª parcela em dinheiro registrada. Restam ${installments - 1} parcela(s).`
+        );
+        playBeep('notif');
+        return;
+      }
+
+      if (sellPaymentMethod === 'bank_transfer') {
+        setSellQr('');
+        setSellCode('');
+        setSellCashMsg(
+          installments === 1
+            ? `Transferência criada para ${buyer.name}. O comprador paga pela área Pendências da própria conta.`
+            : `Compra parcelada criada para ${buyer.name}. As parcelas podem ser pagas por Transferência na área Pendências.`
         );
         playBeep('notif');
         return;
@@ -2159,6 +2383,40 @@ function openOnlineTransfer() {
     setTransferQrUrl(await makeQrDataUrl(code));
   }
 
+
+  async function createBankPropertyTransferRequest() {
+    if (!room || !me) return;
+    setTransferCashMsg('');
+    const prop = properties.find((p) => p.id === transferPropId);
+    const buyer = room.players?.[transferToUid];
+    if (!prop || !buyer) return setTransferCashMsg('Selecione o comprador.');
+    if (prop.ownerUid !== uid) return setTransferCashMsg('Você não é mais dono desta propriedade.');
+    if (buyer.status === 'falido' || buyer.status === 'desistente') return setTransferCashMsg('A conta do comprador está encerrada.');
+
+    const transferId = `tr-${idNow()}`;
+    const doc: TransferDoc = {
+      id: transferId,
+      at: Date.now(),
+      roomCode,
+      propId: prop.id,
+      propName: prop.name,
+      fromUid: uid,
+      fromName: me.name,
+      toUid: buyer.uid,
+      toName: buyer.name,
+      amount: prop.sellValue,
+      status: 'pending_payment',
+      paymentMethod: 'bank_transfer',
+    };
+
+    await set(ref(db, `${roomRefBase}/transfers/${transferId}`), doc);
+    setTransferQrUrl('');
+    setTransferCode('');
+    setTransferCashMsg(
+      `Transferência criada para ${buyer.name}. Ele deve abrir Pendências e confirmar o pagamento de ${money(prop.sellValue)}.`
+    );
+    playBeep('notif');
+  }
 
   async function registerCashPropertyTransfer() {
     if (!room || !me) return;
@@ -2589,13 +2847,13 @@ function matchesQuery(p: PropertyItem, q: string) {
               )}
             
                           {/* PENDÊNCIAS / PARCELAS */}
-              {focus === 'pend' && pendingSales.length > 0 && (
+              {focus === 'pend' && (pendingSales.length > 0 || pendingBankPropertyTransfers.length > 0) && (
                 <div className="pendBox">
                   <div className="pendTitle">Pendências</div>
                   <div className="pendHint">
                     {role === 'bancario'
-                      ? 'Parcelas pendentes dos jogadores. Gere o QR da próxima parcela quando precisar.'
-                      : 'Aqui aparecem suas parcelas pendentes. Peça o QR ao bancário e pague em “Pagar”.'}
+                      ? 'Parcelas pendentes dos jogadores. Pix e dinheiro continuam disponíveis.'
+                      : 'Compras e transferências pendentes. Você pode pagar por transferência bancária direto pela sua conta.'}
                   </div>
 
                   <div className="pendList">
@@ -2634,6 +2892,11 @@ function matchesQuery(p: PropertyItem, q: string) {
                                 </button>
                               </div>
                             )}
+                            {role === 'jogador' && nextIdx >= 0 && (
+                              <button className="miniBtn" onClick={() => paySaleByBankTransfer(s as SaleDoc)}>
+                                Transferência
+                              </button>
+                            )}
                           </div>
 
                           <div className="pendBar">
@@ -2667,6 +2930,23 @@ function matchesQuery(p: PropertyItem, q: string) {
                         </div>
                       );
                     })}
+
+                    {pendingBankPropertyTransfers.map((tr) => (
+                      <div key={tr.id} className="pendItem">
+                        <div className="pendRow">
+                          <div className="pendMain">
+                            <div className="pendName">{tr.propName}</div>
+                            <div className="pendSub">
+                              Compra de <b>{tr.fromName}</b> • {money(tr.amount)}
+                            </div>
+                          </div>
+                          <button className="miniBtn" onClick={() => payPropertyByBankTransfer(tr)}>
+                            Pagar transferência
+                          </button>
+                        </div>
+                        <div className="pendNext">A propriedade é transferida pelo bancário após a confirmação do pagamento.</div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -2834,14 +3114,34 @@ function matchesQuery(p: PropertyItem, q: string) {
               <div className="label">Propriedades</div>
               <div className="hint">
                 {role === 'bancario'
-                  ? 'Bancário vê: disponíveis + vendidas. Clique em disponível para vender.'
-                  : 'Jogador vê disponíveis do banco e suas propriedades. Clique em sua propriedade para aluguel/venda.'}
+                  ? 'Bancário vê todas as propriedades e administra compra, venda e recompra.'
+                  : 'Use os filtros para alternar entre seus imóveis e os imóveis disponíveis no Banco.'}
               </div>
             </div>
             <button className="chevBtn" onClick={() => setShowAllProps((v) => !v)} title="Ver mais/menos">
               <span className="chev">{showAllProps ? '–' : '›'}</span>
             </button>
           </div>
+
+{role === 'jogador' && (
+  <div className="propViewTabs" role="tablist" aria-label="Filtro de propriedades">
+    <button
+      type="button"
+      className={propView === 'mine' ? 'propViewBtn active' : 'propViewBtn'}
+      onClick={() => { setPropView('mine'); setShowAllProps(false); }}
+    >
+      Minhas propriedades <span>{propsAll.filter((p) => p.ownerUid === uid).length}</span>
+    </button>
+    <button
+      type="button"
+      className={propView === 'sale' ? 'propViewBtn active' : 'propViewBtn'}
+      onClick={() => { setPropView('sale'); setShowAllProps(false); }}
+    >
+      À venda <span>{propsAll.filter((p) => p.ownerUid === BANK_UID).length}</span>
+    </button>
+  </div>
+)}
+
 <div className="propFilters">
   <input
     className="propSearch"
@@ -2890,7 +3190,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 
           
           <div className="row2">
-            <div className="sectionTitle">Propriedades</div>
+            <div className="sectionTitle">{role === 'jogador' ? (propView === 'mine' ? 'Minhas propriedades' : 'Propriedades à venda') : 'Propriedades'}</div>
             <button className="linkBtn" onClick={() => setShowAllProps((v) => !v)}>
               {showAllProps ? 'Mostrar só 3' : 'Ver todas'}
             </button>
@@ -2899,18 +3199,20 @@ function matchesQuery(p: PropertyItem, q: string) {
           <div className="propGrid">
             {(() => {
               if (propsFilteredSorted.length === 0)
-  return <div className="empty">Nenhuma propriedade encontrada com esse filtro.</div>;
+  return <div className="empty">{role === 'jogador' && propView === 'mine' ? 'Você ainda não possui propriedades.' : role === 'jogador' ? 'Nenhuma propriedade disponível para venda com esse filtro.' : 'Nenhuma propriedade encontrada com esse filtro.'}</div>;
 
-              return propsFilteredSorted.map((p) => {
-                const sold = p.ownerUid !== BANK_UID; // <-- SE NÃO FOR BANK, tá vendida
+              const list = showAllProps ? propsFilteredSorted : propsFilteredSorted.slice(0, 3);
+              return list.map((p) => {
+                const sold = p.ownerUid !== BANK_UID;
+                const isMine = role === 'jogador' && p.ownerUid === uid;
                 const ownerName = sold ? (room.players?.[p.ownerUid]?.name || 'Jogador') : BANK_NAME;
                                        
                 return (
                   <div key={p.id} className="pWrap">
                     <div className="pMiniCard">
-                      <div className={sold ? 'ribbon bad' : 'ribbon ok'}>
+                      <div className={isMine ? 'ribbon ok' : sold ? 'ribbon bad' : 'ribbon ok'}>
   <span className="ribbonText">
-    {sold ? `PROPRIEDADE VENDIDA • Dono: ${ownerName}` : 'DISPONÍVEL PARA VENDA'}
+    {isMine ? 'MINHA PROPRIEDADE' : sold ? `PROPRIEDADE VENDIDA • Dono: ${ownerName}` : 'DISPONÍVEL PARA VENDA'}
   </span>
 </div>
 
@@ -2965,9 +3267,18 @@ function matchesQuery(p: PropertyItem, q: string) {
       VENDER
     </button>
   )
+) : isMine ? (
+  <button
+    className="pBtn"
+    type="button"
+    onClick={() => openRent(p.id)}
+    title="Cobrar aluguel, vender ou transferir esta propriedade"
+  >
+    GERENCIAR
+  </button>
 ) : (
-  <button className="pBtn disabled" type="button" disabled title="Só o bancário vende e gera o QR">
-    VENDER
+  <button className="pBtn disabled" type="button" disabled>
+    DISPONÍVEL NO BANCO
   </button>
 )}
 
@@ -2979,75 +3290,6 @@ function matchesQuery(p: PropertyItem, q: string) {
             })()}
           </div>
 
-{/* minhas props do jogador */}
-          {role === 'jogador' && (
-            <>
-              <div className="sectionTitle">Minhas propriedades</div>
-              <div className="propGrid">
-                {myList.length === 0 && <div className="empty">Você ainda não tem propriedades.</div>}
-                {myList.map((p) => (
-                  <button
-                    key={p.id}
-                    className="prop propBtn"
-                    onClick={() => {
-                      // clique abre aluguel
-                      setRentPropId(p.id);
-                      setRentDiceSum(7);
-                      setRentQrUrl('');
-                      setRentCode('');
-                      setRentOpen(true);
-                    }}
-                    title="Abrir opções (aluguel / vender)"
-                  >
-                    <div className="pTop">
-                      <div className="pNameRow">
-                        <span className="colorBlock" style={{ background: p.colorHex }} />
-                        <div className="pName">{p.name}</div>
-                      </div>
-                      <span className="tag" style={{ borderColor: p.colorHex, color: p.colorHex }}>
-                        {p.colorName}
-                      </span>
-                    </div>
-
-                    {p.kind === 'MULTIPLIER' ? (
-                      <div className="pLine">
-                        <span>Cobrança</span>
-                        <b>{money(p.multiplierValue || 0)} x soma dos dados</b>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="pLine">
-                          <span>Aluguel base</span>
-                          <b>{money(p.baseRent || 0)}</b>
-                        </div>
-                        <div className="pLine">
-                          <span>Casas</span>
-                          <b>{p.houses}</b>
-                        </div>
-                        <div className="pLine">
-                          <span>Hotel</span>
-                          <b>{p.hasHotel ? 'Sim' : 'Não'}</b>
-                        </div>
-                        <div className="pLine">
-                          <span>Venda (fixo)</span>
-                          <b>{money(p.sellValue)}</b>
-                        </div>
-                      </>
-                    )}
-
-                    <div className="hintSmall">Clique para cobrar aluguel / vender.</div>
-                  </button>
-                ))}
-              </div>
-
-              <div className="row2">
-                <div />
-                <button className="linkBtn" onClick={() => setShowAllProps((v) => !v)}>
-                  {showAllProps ? 'Mostrar só 3' : 'Ver todas'}
-                </button>
-              </div>
-            </>
-          )}
         </div>
 
         {/* EXTRATO */}
@@ -3095,11 +3337,9 @@ function matchesQuery(p: PropertyItem, q: string) {
           onCode={(code) => {
             setScanText(code);
             setScanCamOpen(false);
-            setPayOpen(true);
-            // dá um tick pra UI montar e já fazer preview
-            setTimeout(() => {
-              try { parseAndPreview(); } catch {}
-            }, 50);
+            setPayOpen(false);
+            // Valida o valor capturado diretamente; evita usar scanText antigo após setState.
+            previewPaymentCode(code);
           }}
           onFallback={() => {
             setScanCamOpen(false);
@@ -3222,13 +3462,11 @@ function matchesQuery(p: PropertyItem, q: string) {
     className="inp"
     inputMode="decimal"
     value={txAmountText}
-    onFocus={() => {
-      if ((txAmountText || '').trim().startsWith('R$')) setTxAmountText('');
-    }}
+    onFocus={(e) => e.currentTarget.select()}
     onChange={(e) => {
-      const t = e.target.value;
-      setTxAmountText(t);
-      setTxAmount(parseMoneyBRL(t));
+      const n = parseMoneyTyping(e.target.value);
+      setTxAmount(n);
+      setTxAmountText(n > 0 ? moneyTyping(n) : '');
     }}
     onBlur={() => {
       if (txAmount > 0) setTxAmountText(money(txAmount));
@@ -3327,13 +3565,11 @@ function matchesQuery(p: PropertyItem, q: string) {
     className="inp"
     inputMode="decimal"
     value={rcvAmountText}
-    onFocus={() => {
-      if ((rcvAmountText || '').trim().startsWith('R$')) setRcvAmountText('');
-    }}
+    onFocus={(e) => e.currentTarget.select()}
     onChange={(e) => {
-      const t = e.target.value;
-      setRcvAmountText(t);
-      setRcvAmount(parseMoneyBRL(t));
+      const n = parseMoneyTyping(e.target.value);
+      setRcvAmount(n);
+      setRcvAmountText(n > 0 ? moneyTyping(n) : '');
     }}
     onBlur={() => {
       if (rcvAmount > 0) setRcvAmountText(money(rcvAmount));
@@ -3365,7 +3601,6 @@ function matchesQuery(p: PropertyItem, q: string) {
 <Modal
   open={sellOpen}
   title="Vender propriedade"
-  variant="fit"
   onClose={() => {
     setSellOpen(false);
     setSellPropId('');
@@ -3421,6 +3656,13 @@ function matchesQuery(p: PropertyItem, q: string) {
                     Pix
                   </button>
                   <button
+                    className={sellPaymentMethod === 'bank_transfer' ? 'segBtn active' : 'segBtn'}
+                    onClick={() => { setSellPaymentMethod('bank_transfer'); setSellCashMsg(''); setSellQr(''); setSellCode(''); }}
+                    type="button"
+                  >
+                    Transferência
+                  </button>
+                  <button
                     className={sellPaymentMethod === 'cash' ? 'segBtn active' : 'segBtn'}
                     onClick={() => { setSellPaymentMethod('cash'); setSellCashMsg(''); setSellQr(''); setSellCode(''); }}
                     type="button"
@@ -3428,7 +3670,13 @@ function matchesQuery(p: PropertyItem, q: string) {
                     Dinheiro
                   </button>
                 </div>
-                <div className="mHint">Dinheiro físico não altera o saldo digital; apenas registra a operação na partida.</div>
+                <div className="mHint">
+                  {sellPaymentMethod === 'cash'
+                    ? 'Dinheiro físico só registra a operação; não altera o saldo digital.'
+                    : sellPaymentMethod === 'bank_transfer'
+                    ? 'O comprador confirma a transferência na própria conta, em Pendências.'
+                    : 'O comprador escaneia o Pix e confirma o pagamento.'}
+                </div>
               </div>
 
               <div className="field">
@@ -3466,6 +3714,10 @@ function matchesQuery(p: PropertyItem, q: string) {
                   ? sellMode === 'avista'
                     ? 'Registrar pagamento em dinheiro'
                     : 'Registrar 1ª parcela em dinheiro'
+                  : sellPaymentMethod === 'bank_transfer'
+                  ? sellMode === 'avista'
+                    ? 'Criar transferência bancária'
+                    : 'Criar compra parcelada por transferência'
                   : sellMode === 'avista'
                   ? 'Gerar Pix à vista'
                   : 'Gerar Pix da 1ª parcela'}
@@ -3871,6 +4123,13 @@ function matchesQuery(p: PropertyItem, q: string) {
                     Pix
                   </button>
                   <button
+                    className={transferPaymentMethod === 'bank_transfer' ? 'segBtn active' : 'segBtn'}
+                    type="button"
+                    onClick={() => { setTransferPaymentMethod('bank_transfer'); setTransferCashMsg(''); setTransferQrUrl(''); setTransferCode(''); }}
+                  >
+                    Transferência
+                  </button>
+                  <button
                     className={transferPaymentMethod === 'cash' ? 'segBtn active' : 'segBtn'}
                     type="button"
                     onClick={() => { setTransferPaymentMethod('cash'); setTransferCashMsg(''); setTransferQrUrl(''); setTransferCode(''); }}
@@ -3878,12 +4137,22 @@ function matchesQuery(p: PropertyItem, q: string) {
                     Dinheiro
                   </button>
                 </div>
-                <div className="mHint">Dinheiro físico não altera o saldo digital.</div>
+                <div className="mHint">
+                  {transferPaymentMethod === 'cash'
+                    ? 'Dinheiro físico não altera o saldo digital.'
+                    : transferPaymentMethod === 'bank_transfer'
+                    ? 'O comprador autoriza a transferência bancária na própria conta.'
+                    : 'O comprador paga escaneando o Pix.'}
+                </div>
               </div>
 
               {transferPaymentMethod === 'pix' ? (
                 <button className="btn primary" onClick={generateTransferQr} disabled={!transferToUid}>
                   Gerar Pix para o comprador pagar
+                </button>
+              ) : transferPaymentMethod === 'bank_transfer' ? (
+                <button className="btn primary" onClick={createBankPropertyTransferRequest} disabled={!transferToUid}>
+                  Enviar transferência para o comprador
                 </button>
               ) : (
                 <button className="btn primary" onClick={registerCashPropertyTransfer} disabled={!transferToUid}>
@@ -4411,6 +4680,42 @@ function matchesQuery(p: PropertyItem, q: string) {
             grid-template-columns: repeat(2, 1fr);
           }
         }
+.propViewTabs{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  margin:12px 0 10px;
+  padding:5px;
+  border-radius:16px;
+  background:#eef1f3;
+}
+.propViewBtn{
+  border:0;
+  border-radius:12px;
+  padding:11px 10px;
+  background:transparent;
+  color:#46505a;
+  font-weight:900;
+  cursor:pointer;
+}
+.propViewBtn span{
+  display:inline-grid;
+  place-items:center;
+  min-width:22px;
+  height:22px;
+  margin-left:4px;
+  padding:0 6px;
+  border-radius:999px;
+  background:rgba(0,0,0,.08);
+  font-size:11px;
+}
+.propViewBtn.active{
+  background:#fff;
+  color:#0b5d4a;
+  box-shadow:0 4px 14px rgba(0,0,0,.08);
+}
+.propViewBtn.active span{background:rgba(11,93,74,.12);}
+
 .propFilters{
   display:grid;
   grid-template-columns: 1.4fr 1fr 1fr auto;
@@ -4828,14 +5133,25 @@ function matchesQuery(p: PropertyItem, q: string) {
           padding: 12px;
           border-radius: 16px;
           background: #f2f2f7;
+          width: 100%;
+          max-width: 100%;
+          box-sizing: border-box;
+          overflow: visible;
         }
 .qrImg {
-  width: min(220px, 60vw);
-  height: min(220px, 60vw);
+  width: min(250px, 68vw);
+  height: auto;
+  aspect-ratio: 1 / 1;
+  object-fit: contain;
+  box-sizing: border-box;
   border-radius: 14px;
   background: #fff;
   border: 1px solid rgba(0, 0, 0, 0.08);
-  padding: 10px;
+  padding: 12px;
+  display: block;
+  max-width: 100%;
+  max-height: min(250px, 42vh);
+  flex: 0 0 auto;
 }
         .rowBtn {
           display: flex;
@@ -4844,7 +5160,7 @@ function matchesQuery(p: PropertyItem, q: string) {
 
         .seg2 {
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
           gap: 8px;
         }
         .segBtn {
@@ -4871,14 +5187,14 @@ function matchesQuery(p: PropertyItem, q: string) {
 .sellFit{
   display: grid;
   gap: 10px;
-  max-height: 560px;      /* trava altura pra sempre caber */
-  overflow: hidden;       /* mata rolagem */
+  max-height: none;
+  overflow: visible;
 }
 
 /* QR menor pra não estourar */
 .sellFit .qrImg{
-  width: 180px;
-  height: 180px;
+  width: min(220px, 62vw);
+  height: auto;
 }
 
 /* código do pix menor e sem scroll */
@@ -5010,8 +5326,8 @@ function matchesQuery(p: PropertyItem, q: string) {
   gap: 10px;
   align-content: start;      /* não estica vertical */
   grid-auto-rows: min-content;
-  overflow: hidden;
-  max-height: 560px;
+  overflow: visible;
+  max-height: none;
 }
 
 /* qrBox não pode virar um “retângulo grande” */
@@ -5024,8 +5340,8 @@ function matchesQuery(p: PropertyItem, q: string) {
 
 /* QR um pouco menor só pra garantir encaixe */
 .sellFit .qrImg{
-  width: 180px;
-  height: 180px;
+  width: min(220px, 62vw);
+  height: auto;
 }
   
 
@@ -5036,9 +5352,9 @@ function matchesQuery(p: PropertyItem, q: string) {
 }
 
 .sellQrImg{
-  width: 160px;
-  height: 160px;
-  padding: 8px;
+  width: min(220px, 62vw);
+  height: auto;
+  padding: 10px;
 }
 
 /* linha de copiar */
@@ -5090,8 +5406,8 @@ function matchesQuery(p: PropertyItem, q: string) {
         .bps{font-size:12px;opacity:.7;margin-top:2px}
         .bankPayHint{margin-top:10px;font-size:12px;opacity:.85}
         .camWrap{display:grid;gap:10px}
-        .camFrame{position:relative;overflow:hidden;border-radius:18px;background:#000;aspect-ratio:1/1}
-        .camVideo{width:100%;height:100%;object-fit:cover}
+        .camFrame{position:relative;overflow:hidden;border-radius:18px;background:#0b0b0b;aspect-ratio:1/1;isolation:isolate}
+        .camVideo{width:100%;height:100%;object-fit:cover;display:block;background:#0b0b0b;transform:translateZ(0)}
         .camLine{position:absolute;left:10%;right:10%;top:50%;height:2px;background:rgba(122,44,255,.9);box-shadow:0 0 18px rgba(122,44,255,.9)}
         .pHouses{margin-top:10px;padding-top:10px;border-top:1px dashed rgba(255,255,255,.22)}
         .pHouseTitle{font-weight:1000;font-size:12px;margin-top:6px;opacity:.9}
